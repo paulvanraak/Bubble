@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
   <title>Bubble Wrap Pop</title>
-  <meta name="description" content="An infinite, gorgeously low-poly sheet of bubble wrap that never runs out." />
+  <meta name="description" content="An infinite sheet of bubble wrap that never runs out." />
   <link rel="icon" href="data:," />
   <link rel="stylesheet" href="./styles.css" />
 </head>
@@ -14,34 +14,40 @@
 
     <header id="hud">
       <div id="points-wrap">
-        <div id="points-display">0 💧</div>
+        <div id="points-display">
+          <span class="nav-icon" data-icon="bubble"></span>
+          <span id="points-value">0</span>
+        </div>
       </div>
       <div id="combo-bar-wrap">
         <div id="combo-bar"></div>
         <span id="combo-label"></span>
       </div>
       <div id="hud-right">
-        <div id="streak-badge" title="Daily streak">🔥 <span id="streak-count">0</span></div>
-        <button id="mute-btn" title="Mute/unmute">🔊</button>
+        <div id="streak-badge" title="Daily streak">
+          <span class="nav-icon" data-icon="flame"></span>
+          <span id="streak-count">0</span>
+        </div>
+        <button id="mute-btn" title="Mute/unmute"><span class="nav-icon" data-icon="speakerOn"></span></button>
       </div>
     </header>
 
     <div id="toast-container"></div>
 
-    <div id="hint">Click or tap the bubbles to pop them!</div>
+    <div id="hint">Tap to pop. Drag to scroll the sheet.</div>
 
     <nav id="bottom-nav">
-      <button data-panel="shop">🛒<span>Shop</span></button>
-      <button data-panel="achievements">🏆<span>Achievements</span></button>
-      <button data-panel="cosmetics">🎨<span>Skins</span></button>
-      <button id="prestige-btn" class="hidden" data-panel="prestige">♻️<span>Recycle</span></button>
+      <button data-panel="shop"><span class="nav-icon" data-icon="cart"></span><span>Shop</span></button>
+      <button data-panel="achievements"><span class="nav-icon" data-icon="trophy"></span><span>Achievements</span></button>
+      <button data-panel="cosmetics"><span class="nav-icon" data-icon="palette"></span><span>Skins</span></button>
+      <button id="prestige-btn" class="hidden" data-panel="prestige"><span class="nav-icon" data-icon="recycle"></span><span>Recycle</span></button>
     </nav>
 
     <div id="panel-overlay" class="hidden">
       <div id="panel">
         <div id="panel-header">
           <h2 id="panel-title">Panel</h2>
-          <button id="panel-close" aria-label="Close">✕</button>
+          <button id="panel-close" aria-label="Close"><span class="nav-icon" data-icon="close"></span></button>
         </div>
         <div id="panel-content"></div>
       </div>

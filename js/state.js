@@ -1,48 +1,50 @@
 // Game state: defaults, persistence, offline-earnings & streak calculations.
 
-export const SHEET_SIZES = [5, 8, 12, 16];
-const SAVE_KEY = 'bubblewrap.save.v1';
+export const ROW_TIERS = [7, 9, 11, 13]; // visible bubble rows; columns are infinite in both directions
+const SAVE_KEY = 'bubblewrap.save.v2';
 const OFFLINE_CAP_SECONDS = 8 * 60 * 60; // 8 hours
 
+// Skins tint the same realistic clear-plastic bubble material - they never
+// replace it with flat paint, so the sheet always reads as real bubble wrap.
 export const PALETTES = {
-  pastel: {
-    name: 'Pastel',
-    bg: ['#fdf6f0', '#f3e9ff'],
-    colors: ['#ffd6e8', '#c9f2ff', '#fff4c2', '#e2d9ff', '#cdf7e3'],
+  clear: {
+    name: 'Clear',
+    bg: ['#0c1620', '#050a10'],
+    tint: '#bfe3ee',
     unlockedByDefault: true,
   },
-  glow: {
-    name: 'Glow-in-the-Dark',
-    bg: ['#04070f', '#0a1a1f'],
-    colors: ['#39ff88', '#33e0ff', '#c6ff4d', '#7dffb8', '#4dfff0'],
+  arctic: {
+    name: 'Arctic',
+    bg: ['#0a1a24', '#03080d'],
+    tint: '#dff6ff',
     emissive: true,
   },
-  holographic: {
-    name: 'Holographic',
-    bg: ['#0d0a1f', '#1a0f2e'],
-    colors: ['#ff9de2', '#9dc6ff', '#c8ff9d', '#ffe89d', '#d29dff'],
+  amber: {
+    name: 'Amber',
+    bg: ['#1a1006', '#0a0603'],
+    tint: '#ffcf8a',
+  },
+  iridescent: {
+    name: 'Iridescent',
+    bg: ['#0b0f22', '#04050f'],
+    tint: '#d9d4ff',
     iridescent: true,
   },
-  galaxy: {
-    name: 'Galaxy',
-    bg: ['#050311', '#120a2b'],
-    colors: ['#8f6bff', '#5ad1ff', '#ff6bd5', '#ffd76b', '#6bffb0'],
+  midnight: {
+    name: 'Midnight Glow',
+    bg: ['#020409', '#000000'],
+    tint: '#7ee6c8',
     emissive: true,
     stars: true,
-  },
-  seasonal: {
-    name: 'Peppermint',
-    bg: ['#fff5f5', '#ffeaea'],
-    colors: ['#ff5c5c', '#ffffff', '#5cff8a', '#ffd15c', '#ff5cd6'],
   },
 };
 
 export const ACHIEVEMENTS = [
   { id: 'pop_100', name: 'Getting Started', desc: 'Pop 100 bubbles', goal: 100, type: 'lifetimePops', unlocksPalette: null },
-  { id: 'pop_10k', name: 'Pop Enthusiast', desc: 'Pop 10,000 bubbles', goal: 10000, type: 'lifetimePops', unlocksPalette: 'glow' },
-  { id: 'pop_1m', name: 'Pop Legend', desc: 'Pop 1,000,000 bubbles', goal: 1000000, type: 'lifetimePops', unlocksPalette: 'galaxy' },
-  { id: 'perfect_sheet', name: 'Perfect Sheet', desc: 'Clear a full sheet without a single missed click', goal: 1, type: 'flag', unlocksPalette: 'holographic' },
-  { id: 'find_dud', name: 'That\'s... Not a Pop', desc: 'Find a dud bubble', goal: 1, type: 'flag', unlocksPalette: 'seasonal' },
+  { id: 'pop_10k', name: 'Pop Enthusiast', desc: 'Pop 10,000 bubbles', goal: 10000, type: 'lifetimePops', unlocksPalette: 'arctic' },
+  { id: 'pop_1m', name: 'Pop Legend', desc: 'Pop 1,000,000 bubbles', goal: 1000000, type: 'lifetimePops', unlocksPalette: 'midnight' },
+  { id: 'flawless_streak', name: 'Flawless Streak', desc: 'Pop 150 bubbles in a row without a single missed click', goal: 1, type: 'flag', unlocksPalette: 'iridescent' },
+  { id: 'find_dud', name: 'That\'s Not a Pop', desc: 'Find a dud bubble', goal: 1, type: 'flag', unlocksPalette: 'amber' },
   { id: 'melody', name: 'Perfect Pitch', desc: 'Complete a musical melody row', goal: 1, type: 'flag', unlocksPalette: null },
 ];
 
@@ -50,7 +52,8 @@ function defaultState() {
   return {
     points: 0,
     lifetimePops: 0,
-    gridSizeIndex: 0,
+    rowTierIndex: 0,
+    scrollX: 0, // world-space horizontal scroll position on the infinite sheet
     upgrades: {
       fingerStrength: 0, // 0-3, adds splash radius
       regenSpeed: 0, // 0-3
@@ -62,8 +65,8 @@ function defaultState() {
       recycles: 0,
     },
     cosmetics: {
-      unlocked: ['pastel'],
-      active: 'pastel',
+      unlocked: ['clear'],
+      active: 'clear',
     },
     achievements: {}, // id -> true
     streak: {

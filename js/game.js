@@ -1,4 +1,4 @@
-import { loadState, saveState, SHEET_SIZES, ACHIEVEMENTS } from './state.js';
+import { loadState, saveState } from './state.js';
 import { BubbleScene } from './scene.js';
 import { AudioEngine } from './audio.js';
 import {
@@ -9,6 +9,7 @@ import { checkCounterAchievements, unlockFlag, applyPaletteUnlock } from './achi
 
 const COMBO_WINDOW = 2.2;
 const SAVE_INTERVAL = 8;
+const FLAWLESS_STREAK_GOAL = 150; // consecutive pops without a miss - matches the achievement's description in state.js
 
 function comboMultiplier(combo) {
   return 1 + Math.min(combo, 40) * 0.05;
@@ -39,14 +40,14 @@ export class Game {
     this.saveTimer = 0;
     this.autoPopperAccum = 0;
     this.hitsSinceMiss = 0;
-    this.perfectAchieved = false;
 
     this.scene.init(state);
+    this.scene.onTap = (x, y) => this._handleTap(x, y);
 
     this._pendingOfflineSeconds = offlineSeconds;
     this._pendingNewDay = isNewDay;
 
-    this._bindInput();
+    this.canvas.addEventListener('pointerdown', () => this.audio.ensureStarted());
   }
 
   on(event, cb) {
@@ -74,7 +75,7 @@ export class Game {
       this.emit('streak', { count: this.state.streak.count });
     }
     this.emit('points', this.state.points);
-    this.emit('gridChanged', this.state.gridSizeIndex);
+    this.emit('rowsChanged', this.state.rowTierIndex);
 
     let last = performance.now();
     const loop = (now) => {
@@ -86,17 +87,7 @@ export class Game {
     requestAnimationFrame(loop);
   }
 
-  _bindInput() {
-    this.canvas.addEventListener('pointermove', (e) => {
-      this.scene.setPointer(e.clientX, e.clientY);
-    });
-    this.canvas.addEventListener('pointerdown', (e) => {
-      this.audio.ensureStarted();
-      this._handleClick(e.clientX, e.clientY);
-    });
-  }
-
-  _handleClick(x, y) {
+  _handleTap(x, y) {
     const splashRadius = splashRadiusFor(this.state);
     const hits = this.scene.hitTest(x, y, splashRadius);
     if (hits.length === 0) {
@@ -132,10 +123,8 @@ export class Game {
     this.emit('combo', { combo: this.combo, multiplier: comboMultiplier(this.combo) });
     this.emit('gain', totalPoints);
 
-    const totalCells = this.scene.gridN * this.scene.gridN;
-    if (this.hitsSinceMiss >= totalCells && !this.perfectAchieved) {
-      this.perfectAchieved = true;
-      this._unlockFlag('perfect_sheet');
+    if (this.hitsSinceMiss >= FLAWLESS_STREAK_GOAL) {
+      this._unlockFlag('flawless_streak');
     }
 
     this._drainSceneEvents();
@@ -149,7 +138,7 @@ export class Game {
         this._unlockFlag('melody');
         this.state.points += 250;
         this.emit('points', this.state.points);
-        this.emit('toast', { text: '🎵 Melody complete! +250' });
+        this.emit('toast', { text: 'Melody complete! +250' });
         this.audio.playAchievement();
       }
     }
@@ -207,7 +196,7 @@ export class Game {
     this.saveTimer += dt;
     if (this.saveTimer >= SAVE_INTERVAL) {
       this.saveTimer = 0;
-      saveState(this.state);
+      this.saveNow();
     }
 
     if (canPrestige(this.state) && !this._prestigeNotified) {
@@ -219,18 +208,17 @@ export class Game {
   buyUpgrade(id) {
     const def = UPGRADE_DEFS.find((u) => u.id === id);
     if (!def) return false;
-    const wasGrid = this.state.gridSizeIndex;
+    const wasRows = this.state.rowTierIndex;
     const ok = purchase(def, this.state);
     if (ok) {
-      if (this.state.gridSizeIndex !== wasGrid) {
-        this.scene.setGridSize(this.state.gridSizeIndex);
+      if (this.state.rowTierIndex !== wasRows) {
+        this.scene.setRows(this.state.rowTierIndex);
         this.hitsSinceMiss = 0;
-        this.perfectAchieved = false;
-        this.emit('gridChanged', this.state.gridSizeIndex);
+        this.emit('rowsChanged', this.state.rowTierIndex);
       }
       this.emit('points', this.state.points);
       this.emit('upgradesChanged');
-      saveState(this.state);
+      this.saveNow();
     }
     return ok;
   }
@@ -239,7 +227,7 @@ export class Game {
     if (!this.state.cosmetics.unlocked.includes(id)) return false;
     this.state.cosmetics.active = id;
     this.scene.setPalette(id);
-    saveState(this.state);
+    this.saveNow();
     this.emit('paletteChanged', id);
     return true;
   }
@@ -247,15 +235,14 @@ export class Game {
   recycle() {
     const gained = doRecycle(this.state);
     if (gained > 0) {
-      this.scene.setGridSize(this.state.gridSizeIndex);
+      this.scene.setRows(this.state.rowTierIndex);
       this.hitsSinceMiss = 0;
-      this.perfectAchieved = false;
       this._prestigeNotified = false;
       this.emit('points', this.state.points);
-      this.emit('gridChanged', this.state.gridSizeIndex);
+      this.emit('rowsChanged', this.state.rowTierIndex);
       this.emit('upgradesChanged');
       this.emit('prestiged', gained);
-      saveState(this.state);
+      this.saveNow();
     }
     return gained;
   }
@@ -263,11 +250,12 @@ export class Game {
   toggleMute() {
     this.state.muted = !this.state.muted;
     this.audio.setMuted(this.state.muted);
-    saveState(this.state);
+    this.saveNow();
     return this.state.muted;
   }
 
   saveNow() {
+    this.state.scrollX = this.scene.getScrollX();
     saveState(this.state);
   }
 }

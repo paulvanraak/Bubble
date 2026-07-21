@@ -1,5 +1,6 @@
-import { ACHIEVEMENTS, PALETTES, SHEET_SIZES } from './state.js';
+import { ACHIEVEMENTS, PALETTES, ROW_TIERS } from './state.js';
 import { UPGRADE_DEFS, costFor, canAfford, canPrestige, shardsFromRecycle, prestigeMultiplierFor, splashRadiusFor, autoPopperRateFor, regenSecondsFor } from './upgrades.js';
+import { ICONS, icon } from './icons.js';
 
 function formatNumber(n) {
   n = Math.floor(n);
@@ -19,7 +20,10 @@ export class UI {
     this.game = game;
     this.state = game.state;
 
-    this.pointsEl = document.getElementById('points-display');
+    this._injectStaticIcons();
+
+    this.pointsValue = document.getElementById('points-value');
+    this.pointsDisplay = document.getElementById('points-display');
     this.comboBar = document.getElementById('combo-bar');
     this.comboLabel = document.getElementById('combo-label');
     this.streakCount = document.getElementById('streak-count');
@@ -35,8 +39,18 @@ export class UI {
     this._wireStatic();
     this._wireGameEvents();
     this.streakCount.textContent = this.state.streak.count;
-    this.muteBtn.textContent = this.state.muted ? '🔇' : '🔊';
+    this._setMuteIcon(this.state.muted);
     this._renderPoints(this.state.points);
+  }
+
+  _injectStaticIcons() {
+    document.querySelectorAll('[data-icon]').forEach((el) => {
+      el.innerHTML = ICONS[el.dataset.icon] || '';
+    });
+  }
+
+  _setMuteIcon(muted) {
+    this.muteBtn.innerHTML = `<span class="nav-icon">${muted ? ICONS.speakerOff : ICONS.speakerOn}</span>`;
   }
 
   _wireStatic() {
@@ -49,7 +63,7 @@ export class UI {
     });
     this.muteBtn.addEventListener('click', () => {
       const muted = this.game.toggleMute();
-      this.muteBtn.textContent = muted ? '🔇' : '🔊';
+      this._setMuteIcon(muted);
     });
   }
 
@@ -62,15 +76,15 @@ export class UI {
     this.game.on('offlineEarnings', (data) => this._showOfflineModal(data));
     this.game.on('streak', ({ count }) => this._showStreakModal(count));
     this.game.on('upgradesChanged', () => { if (this._openPanelId === 'shop') this._renderShop(); });
-    this.game.on('gridChanged', () => { if (this._openPanelId === 'shop') this._renderShop(); });
+    this.game.on('rowsChanged', () => { if (this._openPanelId === 'shop') this._renderShop(); });
     this.game.on('paletteChanged', () => { if (this._openPanelId === 'cosmetics') this._renderCosmetics(); });
-    this.game.on('prestiged', (gained) => this._toast(`♻️ Recycled! +${gained} Plastic Shards`));
+    this.game.on('prestiged', (gained) => this._toast(`Recycled - +${gained} Plastic Shards`));
     this.game.on('prestigeAvailable', () => this.prestigeBtn.classList.remove('hidden'));
     if (canPrestige(this.state)) this.prestigeBtn.classList.remove('hidden');
   }
 
   _renderPoints(p) {
-    this.pointsEl.textContent = `${formatNumber(p)} 💧`;
+    this.pointsValue.textContent = formatNumber(p);
   }
 
   _popGainLabel(amount) {
@@ -78,7 +92,7 @@ export class UI {
     const el = document.createElement('div');
     el.className = 'gain-float';
     el.textContent = `+${formatNumber(amount)}`;
-    this.pointsEl.parentElement.appendChild(el);
+    this.pointsDisplay.appendChild(el);
     requestAnimationFrame(() => el.classList.add('rise'));
     setTimeout(() => el.remove(), 900);
   }
@@ -103,7 +117,7 @@ export class UI {
   }
 
   _toastAchievement(def, palette) {
-    this._toast(`🏆 Achievement unlocked: ${def.name}${palette ? ` — new skin: ${PALETTES[palette].name}!` : ''}`);
+    this._toast(`Achievement unlocked: ${def.name}${palette ? ` - new skin: ${PALETTES[palette].name}` : ''}`);
   }
 
   openPanel(id) {
@@ -121,7 +135,7 @@ export class UI {
   }
 
   _renderShop() {
-    this.panelTitle.textContent = '🛒 Upgrade Shop';
+    this.panelTitle.textContent = 'Upgrade Shop';
     const s = this.state;
     this.panelContent.innerHTML = '';
 
@@ -131,7 +145,7 @@ export class UI {
       <span>Splash radius: ${splashRadiusFor(s)}</span>
       <span>Regen: ${regenSecondsFor(s).toFixed(1)}s</span>
       <span>Auto-pop: ${autoPopperRateFor(s).toFixed(2)}/s</span>
-      <span>Grid: ${SHEET_SIZES[s.gridSizeIndex]}×${SHEET_SIZES[s.gridSizeIndex]}</span>
+      <span>Rows: ${ROW_TIERS[s.rowTierIndex]}</span>
     `;
     this.panelContent.appendChild(stats);
 
@@ -148,7 +162,7 @@ export class UI {
           <div class="shop-card-desc">${def.desc}</div>
         </div>
         <button class="buy-btn" ${maxed || !afford ? 'disabled' : ''}>
-          ${maxed ? 'MAX' : `${formatNumber(cost)} 💧`}
+          ${maxed ? 'MAX' : `${icon('bubble', 'inline-icon')}${formatNumber(cost)}`}
         </button>
       `;
       if (!maxed) {
@@ -161,7 +175,7 @@ export class UI {
   }
 
   _renderAchievements() {
-    this.panelTitle.textContent = '🏆 Achievements';
+    this.panelTitle.textContent = 'Achievements';
     this.panelContent.innerHTML = '';
     for (const def of ACHIEVEMENTS) {
       const unlocked = !!this.state.achievements[def.id];
@@ -172,7 +186,7 @@ export class UI {
         progress = `<div class="ach-progress">${formatNumber(this.state.lifetimePops)} / ${formatNumber(def.goal)}</div>`;
       }
       card.innerHTML = `
-        <div class="ach-icon">${unlocked ? '🏆' : '🔒'}</div>
+        <div class="ach-icon">${unlocked ? ICONS.trophy : ICONS.lock}</div>
         <div>
           <div class="ach-name">${def.name}</div>
           <div class="ach-desc">${def.desc}</div>
@@ -184,16 +198,17 @@ export class UI {
   }
 
   _renderCosmetics() {
-    this.panelTitle.textContent = '🎨 Sheet Skins';
+    this.panelTitle.textContent = 'Sheet Skins';
     this.panelContent.innerHTML = '';
     for (const [id, pal] of Object.entries(PALETTES)) {
       const unlocked = this.state.cosmetics.unlocked.includes(id);
       const active = this.state.cosmetics.active === id;
       const card = document.createElement('div');
       card.className = `cosmetic-card ${unlocked ? '' : 'locked'} ${active ? 'active' : ''}`;
-      const swatches = pal.colors.slice(0, 5).map((c) => `<span class="swatch" style="background:${c}"></span>`).join('');
       card.innerHTML = `
-        <div class="swatch-row">${swatches}</div>
+        <div class="swatch-preview" style="background:linear-gradient(135deg, ${pal.bg[0]}, ${pal.bg[1]})">
+          <span class="swatch-bubble" style="background:${pal.tint}"></span>
+        </div>
         <div class="cosmetic-name">${pal.name}</div>
         <div class="cosmetic-state">${active ? 'Active' : unlocked ? 'Unlocked' : 'Locked'}</div>
       `;
@@ -205,7 +220,7 @@ export class UI {
   }
 
   _renderPrestige() {
-    this.panelTitle.textContent = '♻️ Recycle';
+    this.panelTitle.textContent = 'Recycle';
     this.panelContent.innerHTML = '';
     const s = this.state;
     const eligible = canPrestige(s);
@@ -213,9 +228,9 @@ export class UI {
     const info = document.createElement('div');
     info.className = 'prestige-info';
     info.innerHTML = `
-      <p>Recycle your sheet for a permanent point multiplier. You'll keep all achievements and cosmetics, but your points, grid size and upgrades reset.</p>
-      <p>Plastic Shards: <strong>${s.prestige.shards}</strong> (current multiplier ×${prestigeMultiplierFor(s).toFixed(2)})</p>
-      <p>${eligible ? `Recycling now grants <strong>+${gain} Shards</strong>.` : 'Grow your sheet to max size and earn 50,000 💧 lifetime to unlock recycling.'}</p>
+      <p>Recycle your sheet for a permanent point multiplier. You'll keep all achievements and cosmetics, but your points and upgrades reset.</p>
+      <p>Plastic Shards: <strong>${s.prestige.shards}</strong> (current multiplier &times;${prestigeMultiplierFor(s).toFixed(2)})</p>
+      <p>${eligible ? `Recycling now grants <strong>+${gain} Shards</strong>.` : 'Max out Sheet Height and earn 50,000 lifetime points to unlock recycling.'}</p>
       <button id="do-recycle" ${eligible ? '' : 'disabled'}>Recycle Now</button>
     `;
     this.panelContent.appendChild(info);
@@ -230,10 +245,10 @@ export class UI {
   _showOfflineModal({ seconds, earned }) {
     const mins = Math.round(seconds / 60);
     this.modal.innerHTML = `
-      <h2>Welcome back!</h2>
+      <h2>Welcome back</h2>
       <p>Your auto-poppers kept working while you were away for ${mins} minute${mins === 1 ? '' : 's'}.</p>
-      <p class="modal-big">+${formatNumber(earned)} 💧</p>
-      <button id="modal-ok">Nice!</button>
+      <p class="modal-big">+${formatNumber(earned)}</p>
+      <button id="modal-ok">Continue</button>
     `;
     this.modalOverlay.classList.remove('hidden');
     document.getElementById('modal-ok').addEventListener('click', () => this.modalOverlay.classList.add('hidden'));
@@ -242,9 +257,9 @@ export class UI {
   _showStreakModal(count) {
     if (this.modalOverlay.classList.contains('hidden') === false) return;
     this.modal.innerHTML = `
-      <h2>🔥 ${count} Day Streak!</h2>
-      <p>A fresh bubble sheet is waiting for you. Keep popping — miss a day and nothing bad happens, but come back and the streak keeps growing.</p>
-      <button id="modal-ok">Let's pop!</button>
+      <h2>${count} Day Streak</h2>
+      <p>A fresh stretch of sheet is waiting for you. Miss a day and nothing bad happens - just come back and keep popping.</p>
+      <button id="modal-ok">Let's go</button>
     `;
     this.modalOverlay.classList.remove('hidden');
     document.getElementById('modal-ok').addEventListener('click', () => this.modalOverlay.classList.add('hidden'));

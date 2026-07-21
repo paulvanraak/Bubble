@@ -1,4 +1,4 @@
-import { SHEET_SIZES } from './state.js';
+import { ROW_TIERS } from './state.js';
 
 // Base regen time (seconds) for a popped bubble to fully regrow, before Regen Speed upgrades.
 export const BASE_REGEN_SECONDS = 6;
@@ -20,15 +20,15 @@ export const UPGRADE_DEFS = [
     buy: (state) => { state.upgrades.fingerStrength++; },
   },
   {
-    id: 'sheetSize',
+    id: 'sheetHeight',
     tier: 2,
-    name: 'Sheet Size',
-    desc: 'Grow the bubble wrap sheet.',
-    maxLevel: SHEET_SIZES.length - 1,
+    name: 'Sheet Height',
+    desc: 'More rows of bubbles on screen at once.',
+    maxLevel: ROW_TIERS.length - 1,
     costs: [300, 1500, 6000],
-    levelOf: (state) => state.gridSizeIndex,
+    levelOf: (state) => state.rowTierIndex,
     canBuy: () => true,
-    buy: (state) => { state.gridSizeIndex++; },
+    buy: (state) => { state.rowTierIndex++; },
   },
   {
     id: 'regenSpeed',
@@ -60,7 +60,7 @@ export const UPGRADE_DEFS = [
     maxLevel: 1,
     costs: [20000],
     levelOf: (state) => (state.upgrades.multiPop ? 1 : 0),
-    canBuy: (state) => state.gridSizeIndex >= 1,
+    canBuy: (state) => state.rowTierIndex >= 1,
     buy: (state) => { state.upgrades.multiPop = true; },
   },
 ];
@@ -102,11 +102,11 @@ export function purchase(def, state) {
   return true;
 }
 
-// Prestige "Recycle": available once the player has maxed the grid and earned enough lifetime points.
+// Prestige "Recycle": available once the player has maxed sheet height and earned enough lifetime points.
 export const PRESTIGE_MIN_LIFETIME_POINTS = 50000;
 
 export function canPrestige(state) {
-  return state.gridSizeIndex >= SHEET_SIZES.length - 1 && state.lifetimePops >= 2000 && state.points >= PRESTIGE_MIN_LIFETIME_POINTS;
+  return state.rowTierIndex >= ROW_TIERS.length - 1 && state.lifetimePops >= 2000 && state.points >= PRESTIGE_MIN_LIFETIME_POINTS;
 }
 
 export function shardsFromRecycle(state) {
@@ -119,7 +119,7 @@ export function doRecycle(state) {
   state.prestige.shards += gained;
   state.prestige.recycles++;
   state.points = 0;
-  state.gridSizeIndex = 0;
+  state.rowTierIndex = 0;
   state.upgrades = { fingerStrength: 0, regenSpeed: 0, autoPopper: 0, multiPop: false };
   return gained;
 }
