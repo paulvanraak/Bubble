@@ -212,7 +212,7 @@ export class Game {
     const ok = purchase(def, this.state);
     if (ok) {
       if (this.state.rowTierIndex !== wasRows) {
-        this.scene.setRows(this.state.rowTierIndex);
+        this.scene.setViewTier(this.state.rowTierIndex);
         this.hitsSinceMiss = 0;
         this.emit('rowsChanged', this.state.rowTierIndex);
       }
@@ -235,7 +235,7 @@ export class Game {
   recycle() {
     const gained = doRecycle(this.state);
     if (gained > 0) {
-      this.scene.setRows(this.state.rowTierIndex);
+      this.scene.setViewTier(this.state.rowTierIndex);
       this.hitsSinceMiss = 0;
       this._prestigeNotified = false;
       this.emit('points', this.state.points);
@@ -256,6 +256,7 @@ export class Game {
 
   saveNow() {
     this.state.scrollX = this.scene.getScrollX();
+    this.state.scrollY = this.scene.getScrollY();
     saveState(this.state);
   }
 }

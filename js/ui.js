@@ -145,7 +145,7 @@ export class UI {
       <span>Splash radius: ${splashRadiusFor(s)}</span>
       <span>Regen: ${regenSecondsFor(s).toFixed(1)}s</span>
       <span>Auto-pop: ${autoPopperRateFor(s).toFixed(2)}/s</span>
-      <span>Rows: ${ROW_TIERS[s.rowTierIndex]}</span>
+      <span>View size: ${ROW_TIERS[s.rowTierIndex]}</span>
     `;
     this.panelContent.appendChild(stats);
 
@@ -230,7 +230,7 @@ export class UI {
     info.innerHTML = `
       <p>Recycle your sheet for a permanent point multiplier. You'll keep all achievements and cosmetics, but your points and upgrades reset.</p>
       <p>Plastic Shards: <strong>${s.prestige.shards}</strong> (current multiplier &times;${prestigeMultiplierFor(s).toFixed(2)})</p>
-      <p>${eligible ? `Recycling now grants <strong>+${gain} Shards</strong>.` : 'Max out Sheet Height and earn 50,000 lifetime points to unlock recycling.'}</p>
+      <p>${eligible ? `Recycling now grants <strong>+${gain} Shards</strong>.` : 'Max out Wide View and earn 50,000 lifetime points to unlock recycling.'}</p>
       <button id="do-recycle" ${eligible ? '' : 'disabled'}>Recycle Now</button>
     `;
     this.panelContent.appendChild(info);

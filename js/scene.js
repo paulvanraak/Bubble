@@ -2,10 +2,14 @@ import * as THREE from './vendor/three.module.min.js';
 import { ParticleSystem } from './particles.js';
 import { ROW_TIERS, PALETTES } from './state.js';
 
-const RADIUS = 0.5;
-const SPACING = 0.97; // bubbles sit almost touching, like real bubble wrap
-const POP_ANIM_SECONDS = 0.22;
-const BUFFER_COLS = 2;
+const RADIUS = 0.43;
+const SPACING = 1.0; // a small visible gap between bubbles, like real bubble wrap
+const POP_ANIM_SECONDS = 0.22; // squash + flatten into the popped disc
+const REFORM_SECONDS = 0.17; // quick snap back to round - not a slow "inflate"
+const FLAT_SCALE_Z = 0.045;
+const POPPED_VARIANTS = 30;
+const BUFFER_CELLS = 2;
+const ZOOM_OUT_BASE = 1.22; // pulled back a bit further by default
 const ZOOM_MAX_OUT = 0.55;
 const ZOOM_DECAY = 0.015; // per-second multiplier applied continuously - the "shoot back" spring
 const MOMENTUM_DECAY = 0.05;
@@ -62,8 +66,10 @@ export class BubbleScene {
     this.kickVelocity = new THREE.Vector3();
 
     this.scrollX = 0;
+    this.scrollY = 0;
     this.zoomOffset = 0;
-    this.dragVelocity = 0;
+    this.dragVelocityX = 0;
+    this.dragVelocityY = 0;
     this._dragging = false;
     this._pointers = new Map();
 
@@ -72,12 +78,18 @@ export class BubbleScene {
     this.events = [];
     this.onTap = null;
 
-    this.rows = ROW_TIERS[0];
-    this.activeCols = new Map();
-    this.freeColSlots = [];
+    this.viewTier = ROW_TIERS[0];
+    this.activeCells = new Map();
+    this.freeBubbles = [];
 
     this._musicalRowCooldown = 15 + Math.random() * 15;
     this._musicalPhrase = null; // { row, cols:[...], notesPopped:Set }
+
+    if (!this._domeGeo) {
+      const domeGeo = new THREE.SphereGeometry(RADIUS, 24, 16, 0, Math.PI * 2, 0, Math.PI / 2);
+      domeGeo.rotateX(Math.PI / 2);
+      this._domeGeo = domeGeo;
+    }
 
     this._resize();
     window.addEventListener('resize', () => this._resize());
@@ -90,7 +102,7 @@ export class BubbleScene {
     this.hemiLight = hemi;
 
     // Kept deliberately to two dynamic lights (plus the hemisphere above) - every
-    // extra light doubles per-pixel shading cost across ~100 on-screen bubbles.
+    // extra light doubles per-pixel shading cost across ~100+ on-screen bubbles.
     const key = new THREE.DirectionalLight(0xeaf6ff, 1.15);
     key.position.set(4, 5, 7);
     this.scene.add(key);
@@ -135,10 +147,65 @@ export class BubbleScene {
     tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
     tex.repeat.set(2, 2);
     this._noiseTex = tex;
+
+    // 30 distinct "popped" wrinkle patterns (radiating creases + random tears)
+    // so no two popped bubbles look copy-pasted.
+    this._poppedWrinkleTextures = [];
+    for (let v = 0; v < POPPED_VARIANTS; v++) {
+      this._poppedWrinkleTextures.push(this._makePoppedWrinkleTexture());
+    }
+  }
+
+  _makePoppedWrinkleTexture() {
+    const size = 96;
+    const c = document.createElement('canvas');
+    c.width = c.height = size;
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = '#7d7d7d';
+    ctx.fillRect(0, 0, size, size);
+    const cx = size / 2 + (Math.random() - 0.5) * size * 0.3;
+    const cy = size / 2 + (Math.random() - 0.5) * size * 0.3;
+    const rays = 5 + Math.floor(Math.random() * 5);
+    for (let i = 0; i < rays; i++) {
+      const angle = (i / rays) * Math.PI * 2 + Math.random() * 0.6;
+      const len = size * (0.35 + Math.random() * 0.4);
+      const kinkX = cx + Math.cos(angle) * len * 0.5 + (Math.random() - 0.5) * 12;
+      const kinkY = cy + Math.sin(angle) * len * 0.5 + (Math.random() - 0.5) * 12;
+      const endX = cx + Math.cos(angle) * len;
+      const endY = cy + Math.sin(angle) * len;
+      ctx.strokeStyle = `rgba(40,40,40,${0.25 + Math.random() * 0.25})`;
+      ctx.lineWidth = 1 + Math.random() * 2;
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      ctx.quadraticCurveTo(kinkX, kinkY, endX, endY);
+      ctx.stroke();
+      ctx.strokeStyle = `rgba(255,255,255,${0.12 + Math.random() * 0.18})`;
+      ctx.lineWidth = 0.6;
+      ctx.beginPath();
+      ctx.moveTo(cx + 1, cy + 1);
+      ctx.quadraticCurveTo(kinkX + 1, kinkY + 1, endX + 1, endY + 1);
+      ctx.stroke();
+    }
+    for (let i = 0; i < 30; i++) {
+      const x = Math.random() * size, y = Math.random() * size;
+      const r = 1 + Math.random() * 5;
+      const dark = Math.random() > 0.5;
+      ctx.fillStyle = dark ? `rgba(30,30,30,${0.08 + Math.random() * 0.1})` : `rgba(255,255,255,${0.08 + Math.random() * 0.12})`;
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.strokeStyle = 'rgba(30,30,30,0.3)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(cx, cy, size * (0.28 + Math.random() * 0.12), 0, Math.PI * 2);
+    ctx.stroke();
+    const tex = new THREE.CanvasTexture(c);
+    return tex;
   }
 
   // A tiny procedural equirectangular gradient (no external HDRI) fed through
-  // PMREMGenerator so the glossy/transmissive bubbles pick up soft reflections.
+  // PMREMGenerator so the glossy bubbles pick up soft reflections.
   _buildEnvironment() {
     const w = 128, h = 64;
     const c = document.createElement('canvas');
@@ -174,8 +241,9 @@ export class BubbleScene {
 
   init(state) {
     this.scrollX = state.scrollX || 0;
+    this.scrollY = state.scrollY || 0;
     this.setPalette(state.cosmetics.active);
-    this.setRows(state.rowTierIndex);
+    this.setViewTier(state.rowTierIndex);
   }
 
   setPalette(paletteId) {
@@ -196,7 +264,7 @@ export class BubbleScene {
       const pos = new Float32Array(N * 3);
       for (let i = 0; i < N; i++) {
         pos[i * 3] = (Math.random() - 0.5) * 60;
-        pos[i * 3 + 1] = (Math.random() - 0.5) * 30;
+        pos[i * 3 + 1] = (Math.random() - 0.5) * 40;
         pos[i * 3 + 2] = -8 - Math.random() * 15;
       }
       starGeo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
@@ -206,10 +274,7 @@ export class BubbleScene {
     }
 
     this._buildMaterials();
-    for (const slot of this.activeCols.values()) {
-      for (const b of slot.bubbles) this._applyMaterial(b);
-    }
-    this._applyPlaneColor();
+    for (const b of this.activeCells.values()) this._applyMaterial(b);
   }
 
   _makeBgTexture(c1, c2) {
@@ -260,73 +325,55 @@ export class BubbleScene {
       dud: mk(0x83917f, { opacity: 0.8, extra: { roughness: 0.55, clearcoat: 0.25 } }),
       musical: mk(0x8fc7ff, { emissive: true, opacity: 0.7, extra: { emissiveIntensity: 0.35 } }),
     };
+
+    if (this._poppedMaterials) this._poppedMaterials.forEach((m) => m.dispose());
+    const poppedTint = tint.clone().lerp(new THREE.Color(0x1a2228), 0.35);
+    this._poppedMaterials = this._poppedWrinkleTextures.map((wrinkleTex) => new THREE.MeshPhysicalMaterial({
+      color: poppedTint,
+      transparent: true,
+      opacity: 0.72,
+      roughness: 0.5,
+      metalness: 0,
+      clearcoat: 0.35,
+      clearcoatRoughness: 0.4,
+      bumpMap: wrinkleTex,
+      bumpScale: 0.03,
+      envMapIntensity: 0.7,
+      emissive: pal.emissive ? tint.clone() : new THREE.Color(0x000000),
+      emissiveIntensity: pal.emissive ? 0.1 : 0,
+    }));
   }
 
-  _applyPlaneColor() {
-    // handled via bg texture behind the transmissive plane; the plane itself
-    // stays a neutral frosted white so light transmits through it convincingly.
-  }
-
-  setRows(rowTierIndex) {
+  setViewTier(rowTierIndex) {
     this.rowTierIndex = rowTierIndex;
-    this.rows = ROW_TIERS[rowTierIndex];
+    this.viewTier = ROW_TIERS[rowTierIndex];
     this._rebuild();
     this._fitCamera();
   }
 
   _rebuild() {
-    for (const slot of this.activeCols.values()) this._disposeSlot(slot);
-    for (const slot of this.freeColSlots) this._disposeSlot(slot);
-    this.activeCols.clear();
-    this.freeColSlots.length = 0;
+    for (const b of this.activeCells.values()) this.group.remove(b.mesh);
+    for (const b of this.freeBubbles) this.group.remove(b.mesh);
+    this.activeCells.clear();
+    this.freeBubbles.length = 0;
 
     if (this.plane) {
       this.group.remove(this.plane);
       this.plane.geometry.dispose();
       this.plane.material.dispose();
     }
-    const planeW = 90;
-    const planeH = this.rows * SPACING + SPACING * 6;
-    const segX = 60, segY = Math.max(8, Math.round(this.rows * 2));
-    const planeGeo = new THREE.PlaneGeometry(planeW, planeH, segX, segY);
+    const planeSize = 80;
+    const segs = 64;
+    const planeGeo = new THREE.PlaneGeometry(planeSize, planeSize, segs, segs);
     const planeMat = new THREE.MeshStandardMaterial({ color: 0x0d1a22, roughness: 0.95, metalness: 0.0 });
     this.plane = new THREE.Mesh(planeGeo, planeMat);
     this.plane.position.z = -0.2;
     this.group.add(this.plane);
     this._planeBasePos = planeGeo.attributes.position.array.slice();
 
-    if (!this._domeGeo) {
-      const domeGeo = new THREE.SphereGeometry(RADIUS, 16, 10, 0, Math.PI * 2, 0, Math.PI / 2);
-      domeGeo.rotateX(Math.PI / 2);
-      this._domeGeo = domeGeo;
-    }
     if (!this._materials) this._buildMaterials();
 
-    this._reconcileColumns(true);
-  }
-
-  _disposeSlot(slot) {
-    for (const b of slot.bubbles) {
-      this.group.remove(b.mesh);
-    }
-  }
-
-  _createColumnSlot() {
-    const bubbles = [];
-    for (let row = 0; row < this.rows; row++) {
-      const mesh = new THREE.Mesh(this._domeGeo, this._materials.normal);
-      mesh.position.set(0, this._rowY(row), 0);
-      this.group.add(mesh);
-      bubbles.push({
-        row, col: 0, mesh,
-        kind: 'normal', state: 'alive', timer: 0, regenSeconds: 1, noteIndex: 0,
-      });
-    }
-    return { colIndex: null, bubbles };
-  }
-
-  _rowY(row) {
-    return (row - (this.rows - 1) / 2) * SPACING;
+    this._reconcileCells();
   }
 
   _kindScale(kind) {
@@ -334,64 +381,81 @@ export class BubbleScene {
   }
 
   _applyMaterial(bubble) {
-    bubble.mesh.material = this._materials[bubble.kind] || this._materials.normal;
-  }
-
-  _ensureColumn(col) {
-    if (this.activeCols.has(col)) return;
-    let slot = this.freeColSlots.pop();
-    if (!slot) slot = this._createColumnSlot();
-    slot.colIndex = col;
-    for (const b of slot.bubbles) {
-      b.col = col;
-      b.kind = rollKind();
-      b.state = 'alive';
-      b.timer = 0;
-      b.mesh.position.x = col * SPACING;
-      b.mesh.position.y = this._rowY(b.row);
-      b.mesh.position.z = 0;
-      b.mesh.scale.setScalar(this._kindScale(b.kind));
-      b.mesh.visible = true;
-      this._applyMaterial(b);
+    if (bubble.state === 'popped') {
+      bubble.mesh.material = this._poppedMaterials[bubble.poppedVariant];
+    } else {
+      bubble.mesh.material = this._materials[bubble.kind] || this._materials.normal;
     }
-    this.activeCols.set(col, slot);
   }
 
-  _releaseColumn(col) {
-    const slot = this.activeCols.get(col);
-    if (!slot) return;
-    this.activeCols.delete(col);
-    for (const b of slot.bubbles) {
-      b.mesh.position.x = 1e6;
-      b.mesh.visible = false;
-    }
-    this.freeColSlots.push(slot);
+  _key(row, col) {
+    return row + ',' + col;
   }
 
-  _visibleColRange() {
+  _createBubble() {
+    const mesh = new THREE.Mesh(this._domeGeo, this._materials.normal);
+    this.group.add(mesh);
+    return {
+      row: 0, col: 0, mesh,
+      kind: 'normal', state: 'alive', timer: 0, regenSeconds: 1, noteIndex: 0, poppedVariant: 0,
+    };
+  }
+
+  _ensureCell(row, col) {
+    const key = this._key(row, col);
+    if (this.activeCells.has(key)) return;
+    let b = this.freeBubbles.pop();
+    if (!b) b = this._createBubble();
+    b.row = row;
+    b.col = col;
+    b.kind = rollKind();
+    b.state = 'alive';
+    b.timer = 0;
+    b.mesh.position.set(col * SPACING, row * SPACING, 0);
+    b.mesh.scale.setScalar(this._kindScale(b.kind));
+    b.mesh.visible = true;
+    this._applyMaterial(b);
+    this.activeCells.set(key, b);
+  }
+
+  _releaseCell(row, col) {
+    const key = this._key(row, col);
+    const b = this.activeCells.get(key);
+    if (!b) return;
+    this.activeCells.delete(key);
+    b.mesh.position.set(1e6, 1e6, 0);
+    b.mesh.visible = false;
+    this.freeBubbles.push(b);
+  }
+
+  _visibleRange() {
     const vFov = (this.camera.fov * Math.PI) / 180;
     const dist = this._currentDist || 10;
-    const halfHeightWorld = dist * Math.tan(vFov / 2);
-    const halfWidthWorld = halfHeightWorld * this.camera.aspect;
-    const minCol = Math.floor((this.scrollX - halfWidthWorld) / SPACING) - BUFFER_COLS;
-    const maxCol = Math.ceil((this.scrollX + halfWidthWorld) / SPACING) + BUFFER_COLS;
-    return [minCol, maxCol];
+    const halfH = dist * Math.tan(vFov / 2);
+    const halfW = halfH * this.camera.aspect;
+    const minCol = Math.floor((this.scrollX - halfW) / SPACING) - BUFFER_CELLS;
+    const maxCol = Math.ceil((this.scrollX + halfW) / SPACING) + BUFFER_CELLS;
+    const minRow = Math.floor((this.scrollY - halfH) / SPACING) - BUFFER_CELLS;
+    const maxRow = Math.ceil((this.scrollY + halfH) / SPACING) + BUFFER_CELLS;
+    return { minCol, maxCol, minRow, maxRow };
   }
 
-  _reconcileColumns(force = false) {
-    const [minCol, maxCol] = this._visibleColRange();
-    for (const col of Array.from(this.activeCols.keys())) {
-      if (col < minCol || col > maxCol) this._releaseColumn(col);
+  _reconcileCells() {
+    const { minCol, maxCol, minRow, maxRow } = this._visibleRange();
+    for (const [key, b] of Array.from(this.activeCells.entries())) {
+      if (b.row < minRow || b.row > maxRow || b.col < minCol || b.col > maxCol) this._releaseCell(b.row, b.col);
     }
-    for (let col = minCol; col <= maxCol; col++) {
-      if (!this.activeCols.has(col)) this._ensureColumn(col);
+    for (let row = minRow; row <= maxRow; row++) {
+      for (let col = minCol; col <= maxCol; col++) {
+        if (!this.activeCells.has(this._key(row, col))) this._ensureCell(row, col);
+      }
     }
   }
 
   _fitCamera() {
-    const extent = this.rows * SPACING + SPACING * 1.4;
+    const extent = this.viewTier * SPACING + SPACING * 1.4;
     const fovRad = (this.camera.fov * Math.PI) / 180;
-    const dist = (extent / 2) / Math.tan(fovRad / 2);
+    const dist = ((extent / 2) / Math.tan(fovRad / 2)) * ZOOM_OUT_BASE;
     this._baseDist = dist;
     if (!this._currentDist) this._currentDist = dist;
   }
@@ -402,10 +466,10 @@ export class BubbleScene {
     this.renderer.setSize(w, h, false);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
-    if (this.rows) this._fitCamera();
+    if (this.viewTier) this._fitCamera();
   }
 
-  // ---------- input: drag-to-scroll, tap-to-pop, pinch/wheel zoom with elastic snap-back ----------
+  // ---------- input: drag-to-scroll (both axes), tap-to-pop, pinch/wheel zoom with elastic snap-back ----------
 
   _bindInput() {
     const canvas = this.canvas;
@@ -441,10 +505,15 @@ export class BubbleScene {
         const now = performance.now();
         const dtSec = Math.max(0.001, (now - this._dragLast.t) / 1000);
         const dxPix = e.clientX - this._dragLast.x;
-        const dxWorld = -dxPix * this._worldPerPixel();
+        const dyPix = e.clientY - this._dragLast.y;
+        const wpp = this._worldPerPixel();
+        const dxWorld = -dxPix * wpp;
+        const dyWorld = dyPix * wpp;
         this.scrollX += dxWorld;
-        this.dragVelocity = dxWorld / dtSec;
-        this._dragMoved += Math.abs(dxPix) + Math.abs(e.clientY - this._dragLast.y);
+        this.scrollY += dyWorld;
+        this.dragVelocityX = dxWorld / dtSec;
+        this.dragVelocityY = dyWorld / dtSec;
+        this._dragMoved += Math.abs(dxPix) + Math.abs(dyPix);
         this._dragLast = { x: e.clientX, y: e.clientY, t: now };
       }
     });
@@ -455,7 +524,8 @@ export class BubbleScene {
         if (this._dragging) {
           const heldMs = performance.now() - this._dragStart.t;
           if (this._dragMoved < TAP_MOVE_THRESHOLD_PX && heldMs < TAP_MAX_MS) {
-            this.dragVelocity = 0;
+            this.dragVelocityX = 0;
+            this.dragVelocityY = 0;
             if (this.onTap) this.onTap(e.clientX, e.clientY);
           }
         }
@@ -470,10 +540,12 @@ export class BubbleScene {
 
     canvas.addEventListener('wheel', (e) => {
       e.preventDefault();
-      if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
-        this.scrollX += e.deltaX * this._worldPerPixel() * 1.4;
-      } else {
+      const wpp = this._worldPerPixel();
+      if (e.ctrlKey || e.metaKey) {
         this.zoomOffset = Math.max(0, Math.min(ZOOM_MAX_OUT, this.zoomOffset + e.deltaY * 0.0006));
+      } else {
+        this.scrollX += e.deltaX * wpp * 1.4;
+        this.scrollY -= e.deltaY * wpp * 1.4;
       }
     }, { passive: false });
   }
@@ -483,7 +555,8 @@ export class BubbleScene {
     this._dragLast = { x, y, t: performance.now() };
     this._dragMoved = 0;
     this._dragging = true;
-    this.dragVelocity = 0;
+    this.dragVelocityX = 0;
+    this.dragVelocityY = 0;
   }
 
   _pointerDist() {
@@ -514,30 +587,24 @@ export class BubbleScene {
     );
     this.raycaster.setFromCamera(ndc, this.camera);
     const meshes = [];
-    for (const slot of this.activeCols.values()) {
-      for (const b of slot.bubbles) if (b.state === 'alive') meshes.push(b.mesh);
-    }
+    for (const b of this.activeCells.values()) if (b.state === 'alive') meshes.push(b.mesh);
     const hits = this.raycaster.intersectObjects(meshes, false);
     if (hits.length === 0) return [];
     const primary = this._bubbleForMesh(hits[0].object);
     if (!primary) return [];
     if (splashRadius <= 0) return [primary];
     const result = [];
-    for (const slot of this.activeCols.values()) {
-      for (const b of slot.bubbles) {
-        if (b.state !== 'alive') continue;
-        const dr = Math.abs(b.row - primary.row);
-        const dc = Math.abs(b.col - primary.col);
-        if (Math.max(dr, dc) <= splashRadius) result.push(b);
-      }
+    for (const b of this.activeCells.values()) {
+      if (b.state !== 'alive') continue;
+      const dr = Math.abs(b.row - primary.row);
+      const dc = Math.abs(b.col - primary.col);
+      if (Math.max(dr, dc) <= splashRadius) result.push(b);
     }
     return result;
   }
 
   _bubbleForMesh(mesh) {
-    for (const slot of this.activeCols.values()) {
-      for (const b of slot.bubbles) if (b.mesh === mesh) return b;
-    }
+    for (const b of this.activeCells.values()) if (b.mesh === mesh) return b;
     return null;
   }
 
@@ -546,6 +613,7 @@ export class BubbleScene {
     bubble.state = 'popping';
     bubble.timer = 0;
     bubble.regenSeconds = this._regenSeconds;
+    bubble.poppedVariant = Math.floor(Math.random() * POPPED_VARIANTS);
 
     const worldPos = new THREE.Vector3();
     bubble.mesh.getWorldPosition(worldPos);
@@ -609,15 +677,24 @@ export class BubbleScene {
     return this.scrollX;
   }
 
+  getScrollY() {
+    return this.scrollY;
+  }
+
   update(dt, { regenSeconds }) {
     this.time += dt;
     this._regenSeconds = regenSeconds;
 
-    if (!this._dragging && this._pointers.size === 0 && Math.abs(this.dragVelocity) > 0.01) {
-      this.scrollX += this.dragVelocity * dt;
-      this.dragVelocity *= Math.pow(MOMENTUM_DECAY, dt);
+    const noPointers = this._pointers.size === 0;
+    if (!this._dragging && noPointers && (Math.abs(this.dragVelocityX) > 0.01 || Math.abs(this.dragVelocityY) > 0.01)) {
+      this.scrollX += this.dragVelocityX * dt;
+      this.scrollY += this.dragVelocityY * dt;
+      const decay = Math.pow(MOMENTUM_DECAY, dt);
+      this.dragVelocityX *= decay;
+      this.dragVelocityY *= decay;
     } else if (this._pointers.size !== 1) {
-      this.dragVelocity = 0;
+      this.dragVelocityX = 0;
+      this.dragVelocityY = 0;
     }
 
     this.zoomOffset *= Math.pow(ZOOM_DECAY, dt);
@@ -632,7 +709,7 @@ export class BubbleScene {
     const targetDist = (this._baseDist || 10) * (1 + this.zoomOffset);
     this._currentDist = this._currentDist === undefined ? targetDist : this._currentDist + (targetDist - this._currentDist) * Math.min(1, dt * 6);
 
-    this._reconcileColumns();
+    this._reconcileCells();
 
     const drift = new THREE.Vector3(
       Math.sin(this.time * 0.1) * 0.3,
@@ -643,10 +720,10 @@ export class BubbleScene {
 
     this.camera.position.set(
       this.scrollX + drift.x + parallax.x + this.kickOffset.x,
-      drift.y + parallax.y + this.kickOffset.y,
+      this.scrollY + drift.y + parallax.y + this.kickOffset.y,
       this._currentDist - this.kickOffset.z
     );
-    this.camera.lookAt(this.scrollX, 0, 0);
+    this.camera.lookAt(this.scrollX, this.scrollY, 0);
 
     this._musicalRowCooldown -= dt;
     if (this._musicalRowCooldown <= 0 && !this._musicalPhrase) {
@@ -654,47 +731,58 @@ export class BubbleScene {
       this._musicalRowCooldown = 4;
     }
 
-    for (const slot of this.activeCols.values()) {
-      for (const b of slot.bubbles) {
-        if (b.state === 'popping') {
-          b.timer += dt;
-          const t = Math.min(1, b.timer / POP_ANIM_SECONDS);
-          let s;
-          if (t < 0.35) {
-            const st = t / 0.35;
-            s = 1 + st * 0.35;
-            b.mesh.scale.set(s * 1.15, s * 0.55, s * 1.15);
-          } else {
-            const st = (t - 0.35) / 0.65;
-            s = (1 - st) * this._kindScale(b.kind);
-            b.mesh.scale.set(s, s, s);
-          }
-          if (t >= 1) {
-            b.state = 'regenerating';
-            b.timer = 0;
-            b.mesh.scale.set(0, 0, 0);
-          }
-        } else if (b.state === 'regenerating') {
-          b.timer += dt;
-          const t = Math.min(1, b.timer / Math.max(0.4, b.regenSeconds));
-          const s = easeOutBack(t) * this._kindScale(b.kind);
-          b.mesh.scale.set(Math.max(0, s), Math.max(0, s), Math.max(0, s));
-          b.mesh.position.z = 0;
-          if (t >= 1) {
-            b.state = 'alive';
-            b.kind = rollKind();
-            this._applyMaterial(b);
-            b.mesh.scale.set(this._kindScale(b.kind), this._kindScale(b.kind), this._kindScale(b.kind));
-          }
-        } else if (b.state === 'alive') {
-          const bob = Math.sin(this.time * 1.4 + b.row * 0.7 + b.col * 0.5) * 0.012;
-          b.mesh.position.z = bob;
+    for (const b of this.activeCells.values()) {
+      if (b.state === 'popping') {
+        b.timer += dt;
+        const t = Math.min(1, b.timer / POP_ANIM_SECONDS);
+        const kScale = this._kindScale(b.kind);
+        if (t < 0.35) {
+          const st = t / 0.35;
+          const s = 1 + st * 0.35;
+          b.mesh.scale.set(s * 1.15 * kScale, s * 0.55 * kScale, s * 1.15 * kScale);
+        } else {
+          const st = (t - 0.35) / 0.65;
+          const sxy = kScale * (1.15 - 0.1 * st);
+          const sz = 0.55 * kScale * (1 - st) + FLAT_SCALE_Z * st;
+          b.mesh.scale.set(sxy, sz, sxy);
         }
+        if (t >= 1) {
+          b.state = 'popped';
+          b.timer = 0;
+          this._applyMaterial(b);
+          const kScale2 = this._kindScale(b.kind);
+          b.mesh.scale.set(1.05 * kScale2, 1.05 * kScale2, FLAT_SCALE_Z);
+        }
+      } else if (b.state === 'popped') {
+        b.timer += dt;
+        if (b.timer >= Math.max(0.4, b.regenSeconds)) {
+          b.state = 'reforming';
+          b.timer = 0;
+        }
+      } else if (b.state === 'reforming') {
+        b.timer += dt;
+        const t = Math.min(1, b.timer / REFORM_SECONDS);
+        const kScale = this._kindScale(b.kind);
+        const eased = easeOutBack(t);
+        const sxy = (1.05 * (1 - t) + eased * t) * kScale;
+        const sz = FLAT_SCALE_Z * (1 - t) + eased * t * kScale;
+        b.mesh.scale.set(Math.max(0.001, sxy), Math.max(0.001, sxy), Math.max(0.001, sz));
+        if (t >= 1) {
+          b.state = 'alive';
+          b.kind = rollKind();
+          this._applyMaterial(b);
+          const kScale2 = this._kindScale(b.kind);
+          b.mesh.scale.set(kScale2, kScale2, kScale2);
+        }
+      } else if (b.state === 'alive') {
+        const bob = Math.sin(this.time * 1.4 + b.row * 0.7 + b.col * 0.5) * 0.012;
+        b.mesh.position.z = bob;
       }
     }
 
     if (this.plane) {
       this.plane.position.x = this.scrollX;
+      this.plane.position.y = this.scrollY;
       const pos = this.plane.geometry.attributes.position;
       const base = this._planeBasePos;
       for (let i = 0; i < pos.count; i++) {
@@ -727,6 +815,7 @@ export class BubbleScene {
 
     if (this._starField) {
       this._starField.position.x = this.scrollX;
+      this._starField.position.y = this.scrollY;
       this._starField.rotation.z += dt * 0.004;
     }
 
@@ -735,21 +824,18 @@ export class BubbleScene {
   }
 
   _tryDesignateMusicalPhrase() {
-    const row = Math.floor(Math.random() * this.rows);
+    const row = Math.round(this.scrollY / SPACING) + Math.floor((Math.random() - 0.5) * 4);
     const startCol = Math.round(this.scrollX / SPACING) + Math.floor((Math.random() - 0.5) * 4);
     const len = 5;
     const cols = [];
     for (let i = 0; i < len; i++) {
       const col = startCol + i;
-      const slot = this.activeCols.get(col);
-      if (!slot) return; // not currently active, try again later
-      const b = slot.bubbles[row];
-      if (b.state !== 'alive' || b.kind !== 'normal') return;
+      const b = this.activeCells.get(this._key(row, col));
+      if (!b || b.state !== 'alive' || b.kind !== 'normal') return; // not currently eligible, try again later
       cols.push(col);
     }
     for (let i = 0; i < len; i++) {
-      const slot = this.activeCols.get(cols[i]);
-      const b = slot.bubbles[row];
+      const b = this.activeCells.get(this._key(row, cols[i]));
       b.kind = 'musical';
       b.noteIndex = i;
       this._applyMaterial(b);
@@ -760,9 +846,7 @@ export class BubbleScene {
 
   randomAliveBubble() {
     const candidates = [];
-    for (const slot of this.activeCols.values()) {
-      for (const b of slot.bubbles) if (b.state === 'alive') candidates.push(b);
-    }
+    for (const b of this.activeCells.values()) if (b.state === 'alive') candidates.push(b);
     if (candidates.length === 0) return null;
     return candidates[Math.floor(Math.random() * candidates.length)];
   }

@@ -22,8 +22,8 @@ export const UPGRADE_DEFS = [
   {
     id: 'sheetHeight',
     tier: 2,
-    name: 'Sheet Height',
-    desc: 'More rows of bubbles on screen at once.',
+    name: 'Wide View',
+    desc: 'Zoom out to see more of the infinite sheet at once.',
     maxLevel: ROW_TIERS.length - 1,
     costs: [300, 1500, 6000],
     levelOf: (state) => state.rowTierIndex,

@@ -1,6 +1,6 @@
 // Game state: defaults, persistence, offline-earnings & streak calculations.
 
-export const ROW_TIERS = [7, 9, 11, 13]; // visible bubble rows; columns are infinite in both directions
+export const ROW_TIERS = [7, 9, 11, 13]; // reference framing size for each zoom/view tier - the sheet itself is infinite in every direction
 const SAVE_KEY = 'bubblewrap.save.v2';
 const OFFLINE_CAP_SECONDS = 8 * 60 * 60; // 8 hours
 
@@ -53,7 +53,8 @@ function defaultState() {
     points: 0,
     lifetimePops: 0,
     rowTierIndex: 0,
-    scrollX: 0, // world-space horizontal scroll position on the infinite sheet
+    scrollX: 0, // world-space scroll position on the infinite sheet
+    scrollY: 0,
     upgrades: {
       fingerStrength: 0, // 0-3, adds splash radius
       regenSpeed: 0, // 0-3
