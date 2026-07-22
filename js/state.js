@@ -15,7 +15,6 @@ export const BASE_PALETTE = {
 // 'normal' and 'dud' are not collectible - they're the plain sheet and comic relief.
 export const SPECIAL_KINDS = {
   golden: { name: 'Golden', tint: '#ffcf4d', weight: 0.035, rarityScore: 5, ability: 'windfall', desc: 'A big points bonus.' },
-  giant: { name: 'Giant', tint: '#bfe3ee', weight: 0.03, rarityScore: 8, ability: 'bigpop', desc: 'Oversized - worth more, pops bigger.' },
   musical: { name: 'Musical', tint: '#8fc7ff', weight: 0.03, rarityScore: 6, ability: 'note', desc: 'Plays a note in key.' },
   red: { name: 'Cross Pop', tint: '#ff5c5c', weight: 0.02, rarityScore: 12, ability: 'cross', desc: 'Pops a cross of 5 bubbles at once.' },
   smile: { name: 'Curve Pop', tint: '#ffd15c', weight: 0.015, rarityScore: 15, ability: 'curve', desc: 'Pops a curved sweep of bubbles.' },
@@ -24,7 +23,7 @@ export const SPECIAL_KINDS = {
 };
 
 export const KIND_WEIGHTS = [
-  ['normal', 0.80],
+  ['normal', 0.83],
   ['dud', 0.05],
   ...Object.entries(SPECIAL_KINDS).map(([id, def]) => [id, def.weight]),
 ];

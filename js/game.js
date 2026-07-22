@@ -15,7 +15,6 @@ const POINTS_FOR_KIND = {
   normal: 1,
   dud: 1,
   golden: 15,
-  giant: 5,
   musical: 2,
   red: 4,
   smile: 4,
@@ -124,12 +123,14 @@ export class Game {
       } else if (result.kind === 'musical') {
         this.audio.playMusicalNote(Math.floor(Math.random() * 8));
       } else if (!playedTone) {
-        this.audio.playPop({ pitch: 0.9 + Math.random() * 0.3, size: result.kind === 'giant' ? 1.6 : 1, comboLevel: comboLvl });
+        this.audio.playPop({ pitch: 0.9 + Math.random() * 0.3, size: 1, comboLevel: comboLvl });
         playedTone = true;
       }
 
       if (SPECIAL_KINDS[result.kind]) this._registerCollectible(result.kind);
     }
+
+    this._vibrate(popList.some((b) => SPECIAL_KINDS[b.kind]) ? [12, 30, 18] : 12);
 
     if (ability === 'wave') {
       const touched = this.scene.triggerWave(primary);
@@ -161,6 +162,7 @@ export class Game {
     this.emit('collectionChanged');
     if (firstTime) {
       this.audio.playSpecialCollected();
+      this._vibrate([15, 40, 15, 40, 25]);
       this.emit('toast', { text: `Collected: ${def.name}!` });
       const collectorDef = checkCollectorAchievement(this.state);
       if (collectorDef) {
@@ -174,7 +176,13 @@ export class Game {
     const def = unlockFlag(this.state, id);
     if (!def) return;
     this.audio.playAchievement();
+    this._vibrate([15, 40, 15, 40, 25]);
     this.emit('achievement', { def });
+  }
+
+  // Web Vibration API - Android/Chrome only, iOS Safari does not expose it to web content.
+  _vibrate(pattern) {
+    if (navigator.vibrate) navigator.vibrate(pattern);
   }
 
   _checkCounterAchievements() {
