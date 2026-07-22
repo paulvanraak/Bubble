@@ -16,6 +16,15 @@ const DISCO_SECONDS = 4;
 
 const CROSS_OFFSETS = [[1, 0], [-1, 0], [0, 1], [0, -1]];
 const CURVE_OFFSETS = [[0, -2], [-1, -1], [-1, 0], [-1, 1], [0, 2]];
+const BEAD_VARIANTS = 4;
+// Streak paths for the 4 reference-style bead highlights (unit circle coords, y down).
+const BEAD_STREAKS = [
+  [{ x1: -0.55, y1: -0.15, cx: -0.1, cy: -0.4, x2: 0.5, y2: -0.35, width: 0.16 }],
+  [{ x1: -0.5, y1: -0.32, cx: -0.05, cy: -0.42, x2: 0.55, y2: -0.28, width: 0.1 },
+   { x1: -0.35, y1: -0.05, cx: -0.05, cy: -0.02, x2: 0.4, y2: 0.02, width: 0.05 }],
+  [{ x1: -0.5, y1: -0.4, cx: 0.05, cy: -0.1, x2: 0.5, y2: 0.3, width: 0.14 }],
+  [{ x1: -0.6, y1: -0.05, cx: -0.1, cy: -0.35, x2: 0.6, y2: -0.15, width: 0.22 }],
+];
 
 function rollKind() {
   const r = Math.random();
@@ -75,6 +84,7 @@ export class BubbleScene {
     if (!this._domeGeo) {
       const domeGeo = new THREE.SphereGeometry(RADIUS, 24, 16, 0, Math.PI * 2, 0, Math.PI / 2);
       domeGeo.rotateX(Math.PI / 2);
+      this._remapDomeUVs(domeGeo);
       this._domeGeo = domeGeo;
     }
 
@@ -137,6 +147,67 @@ export class BubbleScene {
     tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
     tex.repeat.set(2, 2);
     this._noiseTex = tex;
+
+    this._beadTextures = [];
+    for (let v = 0; v < BEAD_VARIANTS; v++) this._beadTextures.push(this._makeBeadTexture(v));
+  }
+
+  // Reprojects the dome's UVs from spherical to a front-facing planar decal (u,v over
+  // the visible circular face) so a flat reference-style bead image reads correctly
+  // instead of stretching around the whole hemisphere.
+  _remapDomeUVs(geo) {
+    const pos = geo.attributes.position;
+    const uv = geo.attributes.uv;
+    for (let i = 0; i < pos.count; i++) {
+      const x = pos.getX(i) / RADIUS;
+      const y = pos.getY(i) / RADIUS;
+      uv.setXY(i, x * 0.5 + 0.5, y * 0.5 + 0.5);
+    }
+    uv.needsUpdate = true;
+  }
+
+  // Recreates the look of the reference bead images (soft powder-blue glass circle with
+  // a curved white highlight streak) procedurally, in 4 varied flavors picked at random
+  // per bubble - we don't have file access to the originals in this environment.
+  _makeBeadTexture(variant) {
+    const size = 160;
+    const c = document.createElement('canvas');
+    c.width = c.height = size;
+    const ctx = c.getContext('2d');
+    const cx = size / 2, cy = size / 2, r = size / 2;
+
+    const grad = ctx.createRadialGradient(cx - r * 0.2, cy - r * 0.3, r * 0.08, cx, cy, r);
+    grad.addColorStop(0, '#e3f6fc');
+    grad.addColorStop(0.45, '#bfe3ee');
+    grad.addColorStop(1, '#87b9cd');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.clip();
+    ctx.globalCompositeOperation = 'lighter';
+    for (const s of BEAD_STREAKS[variant % BEAD_STREAKS.length]) {
+      ctx.strokeStyle = 'rgba(255,255,255,0.75)';
+      ctx.lineWidth = s.width * size;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(cx + s.x1 * r, cy + s.y1 * r);
+      ctx.quadraticCurveTo(cx + s.cx * r, cy + s.cy * r, cx + s.x2 * r, cy + s.y2 * r);
+      ctx.stroke();
+    }
+    ctx.restore();
+
+    ctx.strokeStyle = 'rgba(20,50,60,0.25)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r - 1, 0, Math.PI * 2);
+    ctx.stroke();
+
+    return new THREE.CanvasTexture(c);
   }
 
   // A tiny procedural equirectangular gradient (no external HDRI) fed through
@@ -194,6 +265,7 @@ export class BubbleScene {
   // once) so they can afford real `transmission` for genuine depth and refraction.
   _buildMaterials() {
     const tint = new THREE.Color(BASE_PALETTE.tint);
+    this._tintHex = tint.getHex();
 
     const mkFake = (hex, extra = {}) => new THREE.MeshPhysicalMaterial({
       color: new THREE.Color(hex),
@@ -228,7 +300,6 @@ export class BubbleScene {
 
     if (this._materials) Object.values(this._materials).forEach((m) => m.dispose());
     this._materials = {
-      normal: mkFake(tint.getHex()),
       dud: mkFake(0x83917f, { opacity: 0.75, roughness: 0.55, clearcoat: 0.25 }),
       golden: mkDeep(SPECIAL_KINDS.golden.tint, { emissive: new THREE.Color(SPECIAL_KINDS.golden.tint), emissiveIntensity: 0.35, metalness: 0.15 }),
       musical: mkDeep(SPECIAL_KINDS.musical.tint, { emissive: new THREE.Color(SPECIAL_KINDS.musical.tint), emissiveIntensity: 0.3 }),
@@ -237,6 +308,9 @@ export class BubbleScene {
       water: mkDeep(SPECIAL_KINDS.water.tint, { emissive: new THREE.Color(SPECIAL_KINDS.water.tint), emissiveIntensity: 0.3 }),
       disco: mkDeep(SPECIAL_KINDS.disco.tint, { emissive: new THREE.Color(SPECIAL_KINDS.disco.tint), emissiveIntensity: 0.45, iridescence: 0.8, iridescenceIOR: 1.3 }),
     };
+    for (let v = 0; v < BEAD_VARIANTS; v++) {
+      this._materials['normal' + v] = mkFake(0xffffff, { map: this._beadTextures[v] });
+    }
   }
 
   init(state) {
@@ -277,7 +351,11 @@ export class BubbleScene {
   }
 
   _applyMaterial(bubble) {
-    bubble.mesh.material = this._materials[bubble.kind] || this._materials.normal;
+    if (bubble.kind === 'normal') {
+      bubble.mesh.material = this._materials['normal' + bubble.variant];
+    } else {
+      bubble.mesh.material = this._materials[bubble.kind] || this._materials.normal0;
+    }
   }
 
   _key(row, col) {
@@ -285,11 +363,11 @@ export class BubbleScene {
   }
 
   _createBubble() {
-    const mesh = new THREE.Mesh(this._domeGeo, this._materials.normal);
+    const mesh = new THREE.Mesh(this._domeGeo, this._materials.normal0);
     this.group.add(mesh);
     return {
       row: 0, col: 0, mesh,
-      kind: 'normal', state: 'alive', timer: 0,
+      kind: 'normal', variant: 0, state: 'alive', timer: 0,
     };
   }
 
@@ -309,6 +387,7 @@ export class BubbleScene {
       b.mesh.visible = false;
     } else {
       b.kind = rollKind();
+      b.variant = Math.floor(Math.random() * BEAD_VARIANTS);
       b.state = 'alive';
       b.timer = 0;
       b.mesh.scale.setScalar(1);
@@ -550,7 +629,9 @@ export class BubbleScene {
     bubble.mesh.getWorldPosition(worldPos);
 
     if (flourish) {
-      const colorHex = bubble.mesh.material.color.getHex();
+      // Normal bubbles carry their color in a bead texture (material.color is neutral
+      // white there), so fall back to the base tint for the particle/flash colors.
+      const colorHex = kind === 'normal' ? this._tintHex : bubble.mesh.material.color.getHex();
       this.particles.burst(worldPos, { count: 16, colorHex, size: 1, speed: kind === 'golden' ? 3.4 : 2.6 });
       this._spawnFlashRing(worldPos, colorHex, 1);
     }

@@ -5,8 +5,9 @@ const SAVE_KEY = 'bubblewrap.save.v3';
 const OFFLINE_CAP_SECONDS = 8 * 60 * 60; // 8 hours
 
 // The single realistic clear-plastic look the whole sheet uses now (skins removed).
+// Background is the same powder-blue hue as the bubbles, just much darker.
 export const BASE_PALETTE = {
-  bg: ['#0c1620', '#050a10'],
+  bg: ['#123039', '#03080a'],
   tint: '#bfe3ee',
 };
 
