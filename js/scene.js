@@ -13,6 +13,16 @@ const MOMENTUM_DECAY = 0.05;
 const TAP_MOVE_THRESHOLD_PX = 8;
 const TAP_MAX_MS = 500;
 const DISCO_SECONDS = 4;
+const MOVEMENT_SECONDS = 6;
+const CONVEYOR_SPEED = 0.55;
+const SPIRAL_RADIUS = 4.5;
+const SPIRAL_SPEED = 2.2;
+const PULSE_RADIUS = 7;
+const PULSE_FREQ = 5;
+const PULSE_AMPLITUDE = 0.3;
+const VORTEX_RADIUS = 5;
+const VORTEX_FREQ = 3.2;
+const VORTEX_STRENGTH = 0.55;
 
 const CROSS_OFFSETS = [[1, 0], [-1, 0], [0, 1], [0, -1]];
 const CURVE_OFFSETS = [[0, -2], [-1, -1], [-1, 0], [-1, 1], [0, 2]];
@@ -618,6 +628,60 @@ export class BubbleScene {
     return this.time < this._discoUntil;
   }
 
+  // Movement abilities: a temporary (non-destructive) directional animation layered on
+  // top of bubbles' normal positions - rows/columns sliding, spirals, pulses, a vortex
+  // pull. Only one is active at a time; triggering a new one replaces the last.
+  triggerMovement(type, bubble) {
+    this._movementEffect = { type, startTime: this.time, originRow: bubble.row, originCol: bubble.col };
+  }
+
+  isMovementActive() {
+    return !!this._movementEffect && this.time - this._movementEffect.startTime < MOVEMENT_SECONDS;
+  }
+
+  _movementOffset(b, t) {
+    const eff = this._movementEffect;
+    switch (eff.type) {
+      case 'rowConveyor': {
+        const dir = b.row % 2 === 0 ? 1 : -1;
+        return [dir * t * CONVEYOR_SPEED, 0];
+      }
+      case 'colConveyor': {
+        const dir = b.col % 2 === 0 ? 1 : -1;
+        return [0, dir * t * CONVEYOR_SPEED];
+      }
+      case 'diagonal': {
+        const dir = (b.row + b.col) % 2 === 0 ? 1 : -1;
+        const d = dir * t * CONVEYOR_SPEED * 0.7;
+        return [d, d];
+      }
+      case 'spiral': {
+        const dx0 = b.col - eff.originCol, dy0 = b.row - eff.originRow;
+        const r = Math.hypot(dx0, dy0);
+        if (r > SPIRAL_RADIUS || r < 0.01) return [0, 0];
+        const baseAngle = Math.atan2(dy0, dx0);
+        const angle = baseAngle + t * SPIRAL_SPEED * (1 - r / SPIRAL_RADIUS);
+        return [Math.cos(angle) * r - dx0, Math.sin(angle) * r - dy0];
+      }
+      case 'pulse': {
+        const dx0 = b.col - eff.originCol, dy0 = b.row - eff.originRow;
+        const r = Math.hypot(dx0, dy0);
+        if (r > PULSE_RADIUS || r < 0.01) return [0, 0];
+        const wave = Math.sin(t * PULSE_FREQ - r * 1.4) * PULSE_AMPLITUDE * (1 - r / PULSE_RADIUS);
+        return [(dx0 / r) * wave, (dy0 / r) * wave];
+      }
+      case 'vortex': {
+        const dx0 = b.col - eff.originCol, dy0 = b.row - eff.originRow;
+        const r = Math.hypot(dx0, dy0);
+        if (r > VORTEX_RADIUS || r < 0.01) return [0, 0];
+        const pull = (Math.sin(t * VORTEX_FREQ) * 0.5 + 0.5) * VORTEX_STRENGTH * (1 - r / VORTEX_RADIUS);
+        return [-(dx0 / r) * pull, -(dy0 / r) * pull];
+      }
+      default:
+        return [0, 0];
+    }
+  }
+
   popBubble(bubble, { flourish = true } = {}) {
     if (bubble.state !== 'alive') return;
     const kind = bubble.kind;
@@ -706,6 +770,9 @@ export class BubbleScene {
     );
     this.camera.lookAt(this.scrollX, this.scrollY, 0);
 
+    const movementActive = this.isMovementActive();
+    const movementT = movementActive ? this.time - this._movementEffect.startTime : 0;
+
     for (const b of this.activeCells.values()) {
       if (b.state === 'popping') {
         b.timer += dt;
@@ -726,6 +793,14 @@ export class BubbleScene {
       } else if (b.state === 'alive') {
         const bob = Math.sin(this.time * 1.4 + b.row * 0.7 + b.col * 0.5) * 0.012;
         b.mesh.position.z = bob;
+        if (movementActive) {
+          const [dx, dy] = this._movementOffset(b, movementT);
+          b.mesh.position.x = b.col * SPACING + dx;
+          b.mesh.position.y = b.row * SPACING + dy;
+        } else if (b.mesh.position.x !== b.col * SPACING || b.mesh.position.y !== b.row * SPACING) {
+          b.mesh.position.x = b.col * SPACING;
+          b.mesh.position.y = b.row * SPACING;
+        }
       }
     }
 

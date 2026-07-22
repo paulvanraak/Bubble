@@ -21,10 +21,16 @@ export const SPECIAL_KINDS = {
   smile: { name: 'Curve Pop', tint: '#ffd15c', weight: 0.015, rarityScore: 15, ability: 'curve', desc: 'Pops a curved sweep of bubbles.' },
   water: { name: 'Wave Pop', tint: '#5cd6ff', weight: 0.015, rarityScore: 10, ability: 'wave', desc: 'Sends a wavy dance rippling across the sheet.' },
   disco: { name: 'Disco Pop', tint: '#ff5cd6', weight: 0.005, rarityScore: 40, ability: 'disco', desc: 'Everything goes crazy colors for a few seconds.' },
+  conveyor: { name: 'Conveyor Pop', tint: '#7dffb0', weight: 0.01, rarityScore: 14, ability: 'rowConveyor', desc: 'Every row starts sliding - alternating left and right.' },
+  column: { name: 'Column Pop', tint: '#b07dff', weight: 0.01, rarityScore: 14, ability: 'colConveyor', desc: 'Every column starts sliding - alternating up and down.' },
+  diagonal: { name: 'Diagonal Pop', tint: '#ff9d5c', weight: 0.008, rarityScore: 16, ability: 'diagonal', desc: 'The sheet slides in alternating diagonal bands.' },
+  spiral: { name: 'Spiral Pop', tint: '#5cffe0', weight: 0.006, rarityScore: 20, ability: 'spiral', desc: 'Nearby bubbles swirl around the pop in a spiral.' },
+  pulse: { name: 'Pulse Pop', tint: '#ffe15c', weight: 0.012, rarityScore: 13, ability: 'pulse', desc: 'Rings of motion pulse outward from the pop.' },
+  vortex: { name: 'Vortex Pop', tint: '#c85cff', weight: 0.004, rarityScore: 18, ability: 'vortex', desc: 'Nearby bubbles get pulled toward the pop and released.' },
 };
 
 export const KIND_WEIGHTS = [
-  ['normal', 0.83],
+  ['normal', 0.78],
   ['dud', 0.05],
   ...Object.entries(SPECIAL_KINDS).map(([id, def]) => [id, def.weight]),
 ];

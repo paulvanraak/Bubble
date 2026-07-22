@@ -20,7 +20,15 @@ const POINTS_FOR_KIND = {
   smile: 4,
   water: 3,
   disco: 20,
+  conveyor: 5,
+  column: 5,
+  diagonal: 6,
+  spiral: 8,
+  pulse: 4,
+  vortex: 7,
 };
+
+const MOVEMENT_ABILITIES = new Set(['rowConveyor', 'colConveyor', 'diagonal', 'spiral', 'pulse', 'vortex']);
 
 function comboMultiplier(combo) {
   return 1 + Math.min(combo, 40) * 0.05;
@@ -138,6 +146,9 @@ export class Game {
     } else if (ability === 'disco') {
       this.scene.triggerDisco();
       this.audio.playDisco();
+    } else if (MOVEMENT_ABILITIES.has(ability)) {
+      this.scene.triggerMovement(ability, primary);
+      this.audio.playSpecialCollected();
     }
 
     this.state.points += totalPoints;
