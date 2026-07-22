@@ -1,27 +1,30 @@
-import { loadState, saveState } from './state.js';
+import { loadState, saveState, SPECIAL_KINDS, computePopScore } from './state.js';
 import { BubbleScene } from './scene.js';
 import { AudioEngine } from './audio.js';
 import {
-  UPGRADE_DEFS, regenSecondsFor, autoPopperRateFor, splashRadiusFor,
-  prestigeMultiplierFor, purchase, canPrestige, doRecycle,
+  UPGRADE_DEFS, autoPopperRateFor, prestigeMultiplierFor, purchase, canPrestige, doRecycle,
 } from './upgrades.js';
-import { checkCounterAchievements, unlockFlag, applyPaletteUnlock } from './achievements.js';
+import { checkCounterAchievements, checkCollectorAchievement, unlockFlag } from './achievements.js';
 
 const COMBO_WINDOW = 2.2;
 const SAVE_INTERVAL = 8;
 const FLAWLESS_STREAK_GOAL = 150; // consecutive pops without a miss - matches the achievement's description in state.js
+const DISCO_MULTIPLIER = 2;
+
+const POINTS_FOR_KIND = {
+  normal: 1,
+  dud: 1,
+  golden: 15,
+  giant: 5,
+  musical: 2,
+  red: 4,
+  smile: 4,
+  water: 3,
+  disco: 20,
+};
 
 function comboMultiplier(combo) {
   return 1 + Math.min(combo, 40) * 0.05;
-}
-
-function pointsForKind(kind) {
-  switch (kind) {
-    case 'golden': return 15;
-    case 'giant': return 5;
-    case 'musical': return 2;
-    default: return 1; // normal + dud
-  }
 }
 
 export class Game {
@@ -88,9 +91,8 @@ export class Game {
   }
 
   _handleTap(x, y) {
-    const splashRadius = splashRadiusFor(this.state);
-    const hits = this.scene.hitTest(x, y, splashRadius);
-    if (hits.length === 0) {
+    const primary = this.scene.hitTest(x, y);
+    if (!primary) {
       this.hitsSinceMiss = 0;
       return;
     }
@@ -98,26 +100,45 @@ export class Game {
     this.combo++;
     this.comboTimer = COMBO_WINDOW;
     const comboLvl = Math.floor(this.combo / 5);
-    const mult = comboMultiplier(this.combo) * prestigeMultiplierFor(this.state);
+    const discoMult = this.scene.isDiscoActive() ? DISCO_MULTIPLIER : 1;
+    const mult = comboMultiplier(this.combo) * prestigeMultiplierFor(this.state) * discoMult;
+
+    const specialDef = SPECIAL_KINDS[primary.kind];
+    const ability = specialDef ? specialDef.ability : null;
+
+    let popList = [primary];
+    if (ability === 'cross') popList = popList.concat(this.scene.crossTargets(primary));
+    else if (ability === 'curve') popList = popList.concat(this.scene.curveTargets(primary));
 
     let totalPoints = 0;
     let playedTone = false;
-    for (const bubble of hits) {
+    for (const bubble of popList) {
       const result = this.scene.popBubble(bubble);
       if (!result) continue;
-      totalPoints += Math.max(1, Math.round(pointsForKind(result.kind) * mult));
+      totalPoints += Math.max(1, Math.round((POINTS_FOR_KIND[result.kind] || 1) * mult));
       this.state.lifetimePops++;
       this.hitsSinceMiss++;
 
       if (result.kind === 'dud') {
         this.audio.playDud();
       } else if (result.kind === 'musical') {
-        this.audio.playMusicalNote(bubble.noteIndex);
+        this.audio.playMusicalNote(Math.floor(Math.random() * 8));
       } else if (!playedTone) {
         this.audio.playPop({ pitch: 0.9 + Math.random() * 0.3, size: result.kind === 'giant' ? 1.6 : 1, comboLevel: comboLvl });
         playedTone = true;
       }
+
+      if (SPECIAL_KINDS[result.kind]) this._registerCollectible(result.kind);
     }
+
+    if (ability === 'wave') {
+      const touched = this.scene.triggerWave(primary);
+      if (touched > 0) totalPoints += Math.max(1, Math.round(touched * mult));
+    } else if (ability === 'disco') {
+      this.scene.triggerDisco();
+      this.audio.playDisco();
+    }
+
     this.state.points += totalPoints;
     this.emit('points', this.state.points);
     this.emit('combo', { combo: this.combo, multiplier: comboMultiplier(this.combo) });
@@ -127,19 +148,24 @@ export class Game {
       this._unlockFlag('flawless_streak');
     }
 
-    this._drainSceneEvents();
     this._checkCounterAchievements();
   }
 
-  _drainSceneEvents() {
-    for (const ev of this.scene.drainEvents()) {
-      if (ev.type === 'dud') this._unlockFlag('find_dud');
-      if (ev.type === 'melody') {
-        this._unlockFlag('melody');
-        this.state.points += 250;
-        this.emit('points', this.state.points);
-        this.emit('toast', { text: 'Melody complete! +250' });
+  _registerCollectible(kind) {
+    const def = SPECIAL_KINDS[kind];
+    if (!def) return;
+    const c = this.state.collection[kind];
+    const firstTime = !c.discovered;
+    c.count++;
+    c.discovered = true;
+    this.emit('collectionChanged');
+    if (firstTime) {
+      this.audio.playSpecialCollected();
+      this.emit('toast', { text: `Collected: ${def.name}!` });
+      const collectorDef = checkCollectorAchievement(this.state);
+      if (collectorDef) {
         this.audio.playAchievement();
+        this.emit('achievement', { def: collectorDef });
       }
     }
   }
@@ -147,17 +173,15 @@ export class Game {
   _unlockFlag(id) {
     const def = unlockFlag(this.state, id);
     if (!def) return;
-    const palette = applyPaletteUnlock(this.state, def);
     this.audio.playAchievement();
-    this.emit('achievement', { def, palette });
+    this.emit('achievement', { def });
   }
 
   _checkCounterAchievements() {
     const unlocked = checkCounterAchievements(this.state);
     for (const def of unlocked) {
-      const palette = applyPaletteUnlock(this.state, def);
       this.audio.playAchievement();
-      this.emit('achievement', { def, palette });
+      this.emit('achievement', { def });
     }
   }
 
@@ -179,11 +203,11 @@ export class Game {
         if (bubble) {
           const result = this.scene.popBubble(bubble, { flourish: true });
           if (result) {
-            const pts = Math.max(1, Math.round(pointsForKind(result.kind) * prestigeMultiplierFor(this.state)));
+            const pts = Math.max(1, Math.round((POINTS_FOR_KIND[result.kind] || 1) * prestigeMultiplierFor(this.state)));
             this.state.points += pts;
             this.state.lifetimePops++;
             this.audio.playPop({ pitch: 0.7 + Math.random() * 0.2, size: 0.7, comboLevel: 0 });
-            this._drainSceneEvents();
+            if (SPECIAL_KINDS[result.kind]) this._registerCollectible(result.kind);
           }
         }
       }
@@ -191,7 +215,7 @@ export class Game {
       this._checkCounterAchievements();
     }
 
-    this.scene.update(dt, { regenSeconds: regenSecondsFor(this.state) });
+    this.scene.update(dt);
 
     this.saveTimer += dt;
     if (this.saveTimer >= SAVE_INTERVAL) {
@@ -223,15 +247,6 @@ export class Game {
     return ok;
   }
 
-  setPalette(id) {
-    if (!this.state.cosmetics.unlocked.includes(id)) return false;
-    this.state.cosmetics.active = id;
-    this.scene.setPalette(id);
-    this.saveNow();
-    this.emit('paletteChanged', id);
-    return true;
-  }
-
   recycle() {
     const gained = doRecycle(this.state);
     if (gained > 0) {
@@ -245,6 +260,10 @@ export class Game {
       this.saveNow();
     }
     return gained;
+  }
+
+  popScore() {
+    return computePopScore(this.state);
   }
 
   toggleMute() {

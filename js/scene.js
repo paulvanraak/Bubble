@@ -1,11 +1,10 @@
 import * as THREE from './vendor/three.module.min.js';
 import { ParticleSystem } from './particles.js';
-import { ROW_TIERS, PALETTES } from './state.js';
+import { ROW_TIERS, BASE_PALETTE, SPECIAL_KINDS, KIND_WEIGHTS } from './state.js';
 
 const RADIUS = 0.43;
 const SPACING = 1.0; // a small visible gap between bubbles, like real bubble wrap
-const POP_ANIM_SECONDS = 0.22; // squash + flatten into the popped disc
-const REFORM_SECONDS = 0.17; // quick snap back to round - not a slow "inflate"
+const POP_ANIM_SECONDS = 0.22; // squash + flatten into the popped disc - terminal, never reforms
 const FLAT_SCALE_Z = 0.045;
 const POPPED_VARIANTS = 30;
 const BUFFER_CELLS = 2;
@@ -15,13 +14,10 @@ const ZOOM_DECAY = 0.015; // per-second multiplier applied continuously - the "s
 const MOMENTUM_DECAY = 0.05;
 const TAP_MOVE_THRESHOLD_PX = 8;
 const TAP_MAX_MS = 500;
+const DISCO_SECONDS = 4;
 
-const KIND_WEIGHTS = [
-  ['normal', 0.85],
-  ['golden', 0.045],
-  ['giant', 0.045],
-  ['dud', 0.06],
-];
+const CROSS_OFFSETS = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+const CURVE_OFFSETS = [[0, -2], [-1, -1], [-1, 0], [-1, 1], [0, 2]];
 
 function rollKind() {
   const r = Math.random();
@@ -31,12 +27,6 @@ function rollKind() {
     if (r <= acc) return kind;
   }
   return 'normal';
-}
-
-function easeOutBack(t) {
-  const c1 = 1.70158;
-  const c3 = c1 + 1;
-  return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2);
 }
 
 export class BubbleScene {
@@ -55,6 +45,7 @@ export class BubbleScene {
     this._setupLights();
     this._buildTextures();
     this._buildEnvironment();
+    this._buildMaterials();
 
     this.particles = new ParticleSystem(this.scene);
 
@@ -74,22 +65,23 @@ export class BubbleScene {
     this._pointers = new Map();
 
     this.time = 0;
-    this.paletteId = 'clear';
-    this.events = [];
     this.onTap = null;
+    this._poppedCells = {};
+    this._discoUntil = 0;
+    this._waveQueue = [];
 
     this.viewTier = ROW_TIERS[0];
     this.activeCells = new Map();
     this.freeBubbles = [];
-
-    this._musicalRowCooldown = 15 + Math.random() * 15;
-    this._musicalPhrase = null; // { row, cols:[...], notesPopped:Set }
 
     if (!this._domeGeo) {
       const domeGeo = new THREE.SphereGeometry(RADIUS, 24, 16, 0, Math.PI * 2, 0, Math.PI / 2);
       domeGeo.rotateX(Math.PI / 2);
       this._domeGeo = domeGeo;
     }
+
+    this._bgGrad = this._makeBgTexture(BASE_PALETTE.bg[0], BASE_PALETTE.bg[1]);
+    this.scene.background = this._bgGrad;
 
     this._resize();
     window.addEventListener('resize', () => this._resize());
@@ -200,8 +192,7 @@ export class BubbleScene {
     ctx.beginPath();
     ctx.arc(cx, cy, size * (0.28 + Math.random() * 0.12), 0, Math.PI * 2);
     ctx.stroke();
-    const tex = new THREE.CanvasTexture(c);
-    return tex;
+    return new THREE.CanvasTexture(c);
   }
 
   // A tiny procedural equirectangular gradient (no external HDRI) fed through
@@ -239,44 +230,6 @@ export class BubbleScene {
     pmrem.dispose();
   }
 
-  init(state) {
-    this.scrollX = state.scrollX || 0;
-    this.scrollY = state.scrollY || 0;
-    this.setPalette(state.cosmetics.active);
-    this.setViewTier(state.rowTierIndex);
-  }
-
-  setPalette(paletteId) {
-    this.paletteId = paletteId;
-    const pal = PALETTES[paletteId] || PALETTES.clear;
-    const [c1, c2] = pal.bg;
-    this._bgGrad = this._makeBgTexture(c1, c2);
-    this.scene.background = this._bgGrad;
-    this.hemiLight.color.set(pal.emissive ? 0x6fd0ff : 0x9fd8ff);
-
-    if (this._starField) {
-      this.scene.remove(this._starField);
-      this._starField = null;
-    }
-    if (pal.stars) {
-      const starGeo = new THREE.BufferGeometry();
-      const N = 260;
-      const pos = new Float32Array(N * 3);
-      for (let i = 0; i < N; i++) {
-        pos[i * 3] = (Math.random() - 0.5) * 60;
-        pos[i * 3 + 1] = (Math.random() - 0.5) * 40;
-        pos[i * 3 + 2] = -8 - Math.random() * 15;
-      }
-      starGeo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-      const starMat = new THREE.PointsMaterial({ color: 0xffffff, size: 0.05, transparent: true, opacity: 0.75 });
-      this._starField = new THREE.Points(starGeo, starMat);
-      this.scene.add(this._starField);
-    }
-
-    this._buildMaterials();
-    for (const b of this.activeCells.values()) this._applyMaterial(b);
-  }
-
   _makeBgTexture(c1, c2) {
     const w = 4, h = 128;
     const c = document.createElement('canvas');
@@ -292,38 +245,54 @@ export class BubbleScene {
     return tex;
   }
 
+  // Normal bubbles use cheap fake-glass (alpha transparency + clearcoat + envMap) since
+  // there are 100+ on screen. Special/collectible kinds are rare (usually 0-3 visible at
+  // once) so they can afford real `transmission` for genuine depth and refraction.
   _buildMaterials() {
-    const pal = PALETTES[this.paletteId] || PALETTES.clear;
-    const tint = new THREE.Color(pal.tint);
+    const tint = new THREE.Color(BASE_PALETTE.tint);
 
-    // Note: MeshPhysicalMaterial's real `transmission` forces an extra full-scene
-    // render pass every frame - too expensive with 100+ bubbles on screen, especially
-    // on mobile. We fake clear plastic instead with alpha transparency + clearcoat +
-    // envMap reflections, which uses ordinary (cheap) alpha blending.
-    const mk = (hex, { emissive = false, opacity = 0.62, extra = {} } = {}) => new THREE.MeshPhysicalMaterial({
+    const mkFake = (hex, extra = {}) => new THREE.MeshPhysicalMaterial({
       color: new THREE.Color(hex),
       transparent: true,
-      opacity,
-      roughness: 0.22,
+      opacity: 0.58,
+      roughness: 0.2,
       metalness: 0,
       clearcoat: 1,
-      clearcoatRoughness: 0.18,
+      clearcoatRoughness: 0.16,
       bumpMap: this._noiseTex,
       bumpScale: 0.01,
-      envMapIntensity: 1.3,
-      iridescence: pal.iridescent ? 0.85 : 0,
-      iridescenceIOR: 1.3,
-      emissive: emissive ? new THREE.Color(hex) : new THREE.Color(0x000000),
-      emissiveIntensity: emissive ? 0.22 : 0,
+      envMapIntensity: 1.35,
+      ...extra,
+    });
+
+    const mkDeep = (hex, extra = {}) => new THREE.MeshPhysicalMaterial({
+      color: new THREE.Color(hex),
+      transparent: true,
+      opacity: 0.95,
+      transmission: 0.82,
+      thickness: 0.7,
+      ior: 1.4,
+      roughness: 0.1,
+      metalness: 0,
+      clearcoat: 1,
+      clearcoatRoughness: 0.1,
+      bumpMap: this._noiseTex,
+      bumpScale: 0.008,
+      envMapIntensity: 1.5,
       ...extra,
     });
 
     if (this._materials) Object.values(this._materials).forEach((m) => m.dispose());
     this._materials = {
-      normal: mk(tint.getHex(), { emissive: pal.emissive }),
-      golden: mk(0xffcf4d, { emissive: true, opacity: 0.85, extra: { metalness: 0.2, roughness: 0.12, emissiveIntensity: 0.4 } }),
-      dud: mk(0x83917f, { opacity: 0.8, extra: { roughness: 0.55, clearcoat: 0.25 } }),
-      musical: mk(0x8fc7ff, { emissive: true, opacity: 0.7, extra: { emissiveIntensity: 0.35 } }),
+      normal: mkFake(tint.getHex()),
+      dud: mkFake(0x83917f, { opacity: 0.75, roughness: 0.55, clearcoat: 0.25 }),
+      golden: mkDeep(SPECIAL_KINDS.golden.tint, { emissive: new THREE.Color(SPECIAL_KINDS.golden.tint), emissiveIntensity: 0.35, metalness: 0.15 }),
+      giant: mkDeep(SPECIAL_KINDS.giant.tint, { emissiveIntensity: 0 }),
+      musical: mkDeep(SPECIAL_KINDS.musical.tint, { emissive: new THREE.Color(SPECIAL_KINDS.musical.tint), emissiveIntensity: 0.3 }),
+      red: mkDeep(SPECIAL_KINDS.red.tint, { emissive: new THREE.Color(SPECIAL_KINDS.red.tint), emissiveIntensity: 0.25 }),
+      smile: mkDeep(SPECIAL_KINDS.smile.tint, { emissive: new THREE.Color(SPECIAL_KINDS.smile.tint), emissiveIntensity: 0.3 }),
+      water: mkDeep(SPECIAL_KINDS.water.tint, { emissive: new THREE.Color(SPECIAL_KINDS.water.tint), emissiveIntensity: 0.3 }),
+      disco: mkDeep(SPECIAL_KINDS.disco.tint, { emissive: new THREE.Color(SPECIAL_KINDS.disco.tint), emissiveIntensity: 0.45, iridescence: 0.8, iridescenceIOR: 1.3 }),
     };
 
     if (this._poppedMaterials) this._poppedMaterials.forEach((m) => m.dispose());
@@ -339,9 +308,14 @@ export class BubbleScene {
       bumpMap: wrinkleTex,
       bumpScale: 0.03,
       envMapIntensity: 0.7,
-      emissive: pal.emissive ? tint.clone() : new THREE.Color(0x000000),
-      emissiveIntensity: pal.emissive ? 0.1 : 0,
     }));
+  }
+
+  init(state) {
+    this.scrollX = state.scrollX || 0;
+    this.scrollY = state.scrollY || 0;
+    this._poppedCells = state.poppedCells;
+    this.setViewTier(state.rowTierIndex);
   }
 
   setViewTier(rowTierIndex) {
@@ -371,8 +345,6 @@ export class BubbleScene {
     this.group.add(this.plane);
     this._planeBasePos = planeGeo.attributes.position.array.slice();
 
-    if (!this._materials) this._buildMaterials();
-
     this._reconcileCells();
   }
 
@@ -397,7 +369,7 @@ export class BubbleScene {
     this.group.add(mesh);
     return {
       row: 0, col: 0, mesh,
-      kind: 'normal', state: 'alive', timer: 0, regenSeconds: 1, noteIndex: 0, poppedVariant: 0,
+      kind: 'normal', state: 'alive', timer: 0, poppedVariant: 0,
     };
   }
 
@@ -408,12 +380,21 @@ export class BubbleScene {
     if (!b) b = this._createBubble();
     b.row = row;
     b.col = col;
-    b.kind = rollKind();
-    b.state = 'alive';
-    b.timer = 0;
     b.mesh.position.set(col * SPACING, row * SPACING, 0);
-    b.mesh.scale.setScalar(this._kindScale(b.kind));
     b.mesh.visible = true;
+
+    const storedVariant = this._poppedCells[key];
+    if (storedVariant !== undefined) {
+      b.kind = 'normal';
+      b.state = 'popped';
+      b.poppedVariant = storedVariant;
+      b.mesh.scale.set(1.05, 1.05, FLAT_SCALE_Z);
+    } else {
+      b.kind = rollKind();
+      b.state = 'alive';
+      b.timer = 0;
+      b.mesh.scale.setScalar(this._kindScale(b.kind));
+    }
     this._applyMaterial(b);
     this.activeCells.set(key, b);
   }
@@ -442,7 +423,7 @@ export class BubbleScene {
 
   _reconcileCells() {
     const { minCol, maxCol, minRow, maxRow } = this._visibleRange();
-    for (const [key, b] of Array.from(this.activeCells.entries())) {
+    for (const [, b] of Array.from(this.activeCells.entries())) {
       if (b.row < minRow || b.row > maxRow || b.col < minCol || b.col > maxCol) this._releaseCell(b.row, b.col);
     }
     for (let row = minRow; row <= maxRow; row++) {
@@ -578,8 +559,9 @@ export class BubbleScene {
     this.pointerTarget.y = -((clientY - rect.top) / rect.height) * 2 + 1;
   }
 
-  // Returns the primary hit bubble plus any alive neighbors within splashRadius (chebyshev distance).
-  hitTest(clientX, clientY, splashRadius) {
+  // Returns just the tapped bubble (or null) - multi-pop now only ever comes from a
+  // special bubble's own ability (cross/curve), never from a generic splash upgrade.
+  hitTest(clientX, clientY) {
     const rect = this.canvas.getBoundingClientRect();
     const ndc = new THREE.Vector2(
       ((clientX - rect.left) / rect.width) * 2 - 1,
@@ -589,18 +571,8 @@ export class BubbleScene {
     const meshes = [];
     for (const b of this.activeCells.values()) if (b.state === 'alive') meshes.push(b.mesh);
     const hits = this.raycaster.intersectObjects(meshes, false);
-    if (hits.length === 0) return [];
-    const primary = this._bubbleForMesh(hits[0].object);
-    if (!primary) return [];
-    if (splashRadius <= 0) return [primary];
-    const result = [];
-    for (const b of this.activeCells.values()) {
-      if (b.state !== 'alive') continue;
-      const dr = Math.abs(b.row - primary.row);
-      const dc = Math.abs(b.col - primary.col);
-      if (Math.max(dr, dc) <= splashRadius) result.push(b);
-    }
-    return result;
+    if (hits.length === 0) return null;
+    return this._bubbleForMesh(hits[0].object);
   }
 
   _bubbleForMesh(mesh) {
@@ -608,46 +580,74 @@ export class BubbleScene {
     return null;
   }
 
+  // Extra alive bubbles a pattern ability (cross/curve) should also pop, around `bubble`.
+  patternTargets(bubble, offsets) {
+    const result = [];
+    for (const [dr, dc] of offsets) {
+      const b = this.activeCells.get(this._key(bubble.row + dr, bubble.col + dc));
+      if (b && b.state === 'alive') result.push(b);
+    }
+    return result;
+  }
+
+  crossTargets(bubble) {
+    return this.patternTargets(bubble, CROSS_OFFSETS);
+  }
+
+  curveTargets(bubble) {
+    return this.patternTargets(bubble, CURVE_OFFSETS);
+  }
+
+  // Wave ability: ripples an animated bob outward through nearby alive bubbles without
+  // popping them. Returns how many bubbles were touched (for a small non-destructive bonus).
+  triggerWave(bubble, radius = 6) {
+    let count = 0;
+    for (const b of this.activeCells.values()) {
+      if (b.state !== 'alive') continue;
+      const dist = Math.hypot(b.row - bubble.row, b.col - bubble.col);
+      if (dist > radius) continue;
+      this._waveQueue.push({ bubble: b, delay: dist * 0.045, life: 0 });
+      count++;
+    }
+    return count;
+  }
+
+  triggerDisco() {
+    this._discoUntil = this.time + DISCO_SECONDS;
+  }
+
+  isDiscoActive() {
+    return this.time < this._discoUntil;
+  }
+
   popBubble(bubble, { flourish = true } = {}) {
     if (bubble.state !== 'alive') return;
+    const kind = bubble.kind;
     bubble.state = 'popping';
     bubble.timer = 0;
-    bubble.regenSeconds = this._regenSeconds;
     bubble.poppedVariant = Math.floor(Math.random() * POPPED_VARIANTS);
+    this._poppedCells[this._key(bubble.row, bubble.col)] = bubble.poppedVariant;
 
     const worldPos = new THREE.Vector3();
     bubble.mesh.getWorldPosition(worldPos);
 
     if (flourish) {
-      let colorHex = bubble.mesh.material.color.getHex();
-      let count = bubble.kind === 'giant' ? 34 : 16;
+      const colorHex = bubble.mesh.material.color.getHex();
+      const count = kind === 'giant' ? 34 : 16;
       this.particles.burst(worldPos, {
         count,
         colorHex,
-        size: bubble.kind === 'giant' ? 1.6 : 1,
-        speed: bubble.kind === 'golden' ? 3.4 : 2.6,
+        size: kind === 'giant' ? 1.6 : 1,
+        speed: kind === 'golden' ? 3.4 : 2.6,
       });
-      this._spawnFlashRing(worldPos, colorHex, bubble.kind === 'giant' ? 1.6 : 1);
+      this._spawnFlashRing(worldPos, colorHex, kind === 'giant' ? 1.6 : 1);
     }
-
-    if (bubble.kind === 'dud') this.events.push({ type: 'dud' });
-    if (bubble.kind === 'musical') this._registerMusicalPop(bubble);
 
     this.kickVelocity.x += (Math.random() - 0.5) * 0.05;
     this.kickVelocity.y += (Math.random() - 0.5) * 0.05;
     this.kickVelocity.z += 0.06;
 
-    return { kind: bubble.kind, row: bubble.row, col: bubble.col };
-  }
-
-  _registerMusicalPop(bubble) {
-    if (!this._musicalPhrase || this._musicalPhrase.row !== bubble.row) return;
-    if (!this._musicalPhrase.cols.includes(bubble.col)) return;
-    this._musicalPhrase.notesPopped.add(bubble.col);
-    if (this._musicalPhrase.notesPopped.size >= this._musicalPhrase.cols.length) {
-      this.events.push({ type: 'melody' });
-      this._musicalPhrase = null;
-    }
+    return { kind, row: bubble.row, col: bubble.col };
   }
 
   _spawnFlashRing(pos, colorHex, scale = 1) {
@@ -667,23 +667,11 @@ export class BubbleScene {
     this._flashRings.push(ring);
   }
 
-  drainEvents() {
-    const e = this.events;
-    this.events = [];
-    return e;
-  }
+  getScrollX() { return this.scrollX; }
+  getScrollY() { return this.scrollY; }
 
-  getScrollX() {
-    return this.scrollX;
-  }
-
-  getScrollY() {
-    return this.scrollY;
-  }
-
-  update(dt, { regenSeconds }) {
+  update(dt) {
     this.time += dt;
-    this._regenSeconds = regenSeconds;
 
     const noPointers = this._pointers.size === 0;
     if (!this._dragging && noPointers && (Math.abs(this.dragVelocityX) > 0.01 || Math.abs(this.dragVelocityY) > 0.01)) {
@@ -725,12 +713,6 @@ export class BubbleScene {
     );
     this.camera.lookAt(this.scrollX, this.scrollY, 0);
 
-    this._musicalRowCooldown -= dt;
-    if (this._musicalRowCooldown <= 0 && !this._musicalPhrase) {
-      this._tryDesignateMusicalPhrase();
-      this._musicalRowCooldown = 4;
-    }
-
     for (const b of this.activeCells.values()) {
       if (b.state === 'popping') {
         b.timer += dt;
@@ -748,35 +730,27 @@ export class BubbleScene {
         }
         if (t >= 1) {
           b.state = 'popped';
-          b.timer = 0;
           this._applyMaterial(b);
           const kScale2 = this._kindScale(b.kind);
           b.mesh.scale.set(1.05 * kScale2, 1.05 * kScale2, FLAT_SCALE_Z);
         }
-      } else if (b.state === 'popped') {
-        b.timer += dt;
-        if (b.timer >= Math.max(0.4, b.regenSeconds)) {
-          b.state = 'reforming';
-          b.timer = 0;
-        }
-      } else if (b.state === 'reforming') {
-        b.timer += dt;
-        const t = Math.min(1, b.timer / REFORM_SECONDS);
-        const kScale = this._kindScale(b.kind);
-        const eased = easeOutBack(t);
-        const sxy = (1.05 * (1 - t) + eased * t) * kScale;
-        const sz = FLAT_SCALE_Z * (1 - t) + eased * t * kScale;
-        b.mesh.scale.set(Math.max(0.001, sxy), Math.max(0.001, sxy), Math.max(0.001, sz));
-        if (t >= 1) {
-          b.state = 'alive';
-          b.kind = rollKind();
-          this._applyMaterial(b);
-          const kScale2 = this._kindScale(b.kind);
-          b.mesh.scale.set(kScale2, kScale2, kScale2);
-        }
       } else if (b.state === 'alive') {
         const bob = Math.sin(this.time * 1.4 + b.row * 0.7 + b.col * 0.5) * 0.012;
         b.mesh.position.z = bob;
+      }
+    }
+
+    if (this._waveQueue.length) {
+      for (let i = this._waveQueue.length - 1; i >= 0; i--) {
+        const w = this._waveQueue[i];
+        if (w.delay > 0) { w.delay -= dt; continue; }
+        w.life += dt;
+        if (w.bubble.state !== 'alive' || w.life > 0.5) {
+          this._waveQueue.splice(i, 1);
+          continue;
+        }
+        const bump = Math.sin(w.life * Math.PI / 0.5) * 0.22;
+        w.bubble.mesh.position.z += bump * dt * 6;
       }
     }
 
@@ -813,35 +787,17 @@ export class BubbleScene {
       }
     }
 
-    if (this._starField) {
-      this._starField.position.x = this.scrollX;
-      this._starField.position.y = this.scrollY;
-      this._starField.rotation.z += dt * 0.004;
+    if (this.isDiscoActive()) {
+      const hue = (this.time * 0.6) % 1;
+      this.scene.background = new THREE.Color().setHSL(hue, 0.65, 0.22);
+      this._discoWasActive = true;
+    } else if (this._discoWasActive) {
+      this._discoWasActive = false;
+      this.scene.background = this._bgGrad;
     }
 
     this.particles.update(dt);
     this.renderer.render(this.scene, this.camera);
-  }
-
-  _tryDesignateMusicalPhrase() {
-    const row = Math.round(this.scrollY / SPACING) + Math.floor((Math.random() - 0.5) * 4);
-    const startCol = Math.round(this.scrollX / SPACING) + Math.floor((Math.random() - 0.5) * 4);
-    const len = 5;
-    const cols = [];
-    for (let i = 0; i < len; i++) {
-      const col = startCol + i;
-      const b = this.activeCells.get(this._key(row, col));
-      if (!b || b.state !== 'alive' || b.kind !== 'normal') return; // not currently eligible, try again later
-      cols.push(col);
-    }
-    for (let i = 0; i < len; i++) {
-      const b = this.activeCells.get(this._key(row, cols[i]));
-      b.kind = 'musical';
-      b.noteIndex = i;
-      this._applyMaterial(b);
-    }
-    this._musicalPhrase = { row, cols, notesPopped: new Set() };
-    this._musicalRowCooldown = 18 + Math.random() * 22;
   }
 
   randomAliveBubble() {

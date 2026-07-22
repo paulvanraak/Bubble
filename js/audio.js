@@ -211,6 +211,55 @@ export class AudioEngine {
     });
   }
 
+  // Sparkly ascending arpeggio for discovering a new special bubble type.
+  playSpecialCollected() {
+    if (!this.ctx) return;
+    const ctx = this.ctx;
+    const t = ctx.currentTime;
+    [0, 3, 7, 10, 14].forEach((semi, i) => {
+      const freq = 523.25 * Math.pow(2, semi / 12);
+      const osc = ctx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.value = freq;
+      const g = ctx.createGain();
+      const start = t + i * 0.045;
+      g.gain.setValueAtTime(0.0001, start);
+      g.gain.exponentialRampToValueAtTime(0.22, start + 0.015);
+      g.gain.exponentialRampToValueAtTime(0.0001, start + 0.35);
+      osc.connect(g);
+      g.connect(this.master);
+      osc.start(start);
+      osc.stop(start + 0.35);
+    });
+  }
+
+  // A quick descending-then-rising synth riff to kick off disco mode.
+  playDisco() {
+    if (!this.ctx) return;
+    const ctx = this.ctx;
+    const t = ctx.currentTime;
+    const notes = [0, -2, 3, 7, 12, 7, 3, 7];
+    notes.forEach((semi, i) => {
+      const freq = 349.23 * Math.pow(2, semi / 12);
+      const osc = ctx.createOscillator();
+      osc.type = 'square';
+      osc.frequency.value = freq;
+      const filter = ctx.createBiquadFilter();
+      filter.type = 'lowpass';
+      filter.frequency.value = 1800;
+      const g = ctx.createGain();
+      const start = t + i * 0.09;
+      g.gain.setValueAtTime(0.0001, start);
+      g.gain.exponentialRampToValueAtTime(0.18, start + 0.01);
+      g.gain.exponentialRampToValueAtTime(0.0001, start + 0.14);
+      osc.connect(filter);
+      filter.connect(g);
+      g.connect(this.master);
+      osc.start(start);
+      osc.stop(start + 0.16);
+    });
+  }
+
   _noiseBuffer(duration) {
     const ctx = this.ctx;
     const len = Math.floor(ctx.sampleRate * duration);

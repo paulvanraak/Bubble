@@ -1,52 +1,58 @@
 // Game state: defaults, persistence, offline-earnings & streak calculations.
 
 export const ROW_TIERS = [7, 9, 11, 13]; // reference framing size for each zoom/view tier - the sheet itself is infinite in every direction
-const SAVE_KEY = 'bubblewrap.save.v2';
+const SAVE_KEY = 'bubblewrap.save.v3';
 const OFFLINE_CAP_SECONDS = 8 * 60 * 60; // 8 hours
 
-// Skins tint the same realistic clear-plastic bubble material - they never
-// replace it with flat paint, so the sheet always reads as real bubble wrap.
-export const PALETTES = {
-  clear: {
-    name: 'Clear',
-    bg: ['#0c1620', '#050a10'],
-    tint: '#bfe3ee',
-    unlockedByDefault: true,
-  },
-  arctic: {
-    name: 'Arctic',
-    bg: ['#0a1a24', '#03080d'],
-    tint: '#dff6ff',
-    emissive: true,
-  },
-  amber: {
-    name: 'Amber',
-    bg: ['#1a1006', '#0a0603'],
-    tint: '#ffcf8a',
-  },
-  iridescent: {
-    name: 'Iridescent',
-    bg: ['#0b0f22', '#04050f'],
-    tint: '#d9d4ff',
-    iridescent: true,
-  },
-  midnight: {
-    name: 'Midnight Glow',
-    bg: ['#020409', '#000000'],
-    tint: '#7ee6c8',
-    emissive: true,
-    stars: true,
-  },
+// The single realistic clear-plastic look the whole sheet uses now (skins removed).
+export const BASE_PALETTE = {
+  bg: ['#0c1620', '#050a10'],
+  tint: '#bfe3ee',
 };
 
-export const ACHIEVEMENTS = [
-  { id: 'pop_100', name: 'Getting Started', desc: 'Pop 100 bubbles', goal: 100, type: 'lifetimePops', unlocksPalette: null },
-  { id: 'pop_10k', name: 'Pop Enthusiast', desc: 'Pop 10,000 bubbles', goal: 10000, type: 'lifetimePops', unlocksPalette: 'arctic' },
-  { id: 'pop_1m', name: 'Pop Legend', desc: 'Pop 1,000,000 bubbles', goal: 1000000, type: 'lifetimePops', unlocksPalette: 'midnight' },
-  { id: 'flawless_streak', name: 'Flawless Streak', desc: 'Pop 150 bubbles in a row without a single missed click', goal: 1, type: 'flag', unlocksPalette: 'iridescent' },
-  { id: 'find_dud', name: 'That\'s Not a Pop', desc: 'Find a dud bubble', goal: 1, type: 'flag', unlocksPalette: 'amber' },
-  { id: 'melody', name: 'Perfect Pitch', desc: 'Complete a musical melody row', goal: 1, type: 'flag', unlocksPalette: null },
+// Special, collectible bubble kinds. Each has an on-pop ability, a rarity-driven
+// spawn weight, and a score contribution toward the player's overall Pop-Score.
+// 'normal' and 'dud' are not collectible - they're the plain sheet and comic relief.
+export const SPECIAL_KINDS = {
+  golden: { name: 'Golden', tint: '#ffcf4d', weight: 0.035, rarityScore: 5, ability: 'windfall', desc: 'A big points bonus.' },
+  giant: { name: 'Giant', tint: '#bfe3ee', weight: 0.03, rarityScore: 8, ability: 'bigpop', desc: 'Oversized - worth more, pops bigger.' },
+  musical: { name: 'Musical', tint: '#8fc7ff', weight: 0.03, rarityScore: 6, ability: 'note', desc: 'Plays a note in key.' },
+  red: { name: 'Cross Pop', tint: '#ff5c5c', weight: 0.02, rarityScore: 12, ability: 'cross', desc: 'Pops a cross of 5 bubbles at once.' },
+  smile: { name: 'Curve Pop', tint: '#ffd15c', weight: 0.015, rarityScore: 15, ability: 'curve', desc: 'Pops a curved sweep of bubbles.' },
+  water: { name: 'Wave Pop', tint: '#5cd6ff', weight: 0.015, rarityScore: 10, ability: 'wave', desc: 'Sends a wavy dance rippling across the sheet.' },
+  disco: { name: 'Disco Pop', tint: '#ff5cd6', weight: 0.005, rarityScore: 40, ability: 'disco', desc: 'Everything goes crazy colors for a few seconds.' },
+};
+
+export const KIND_WEIGHTS = [
+  ['normal', 0.80],
+  ['dud', 0.05],
+  ...Object.entries(SPECIAL_KINDS).map(([id, def]) => [id, def.weight]),
 ];
+
+export function computePopScore(state) {
+  let score = 0;
+  for (const id of Object.keys(SPECIAL_KINDS)) {
+    const c = state.collection[id];
+    if (!c || c.count <= 0) continue;
+    score += SPECIAL_KINDS[id].rarityScore + Math.min(c.count - 1, 20);
+  }
+  return score;
+}
+
+export const ACHIEVEMENTS = [
+  { id: 'pop_100', name: 'Getting Started', desc: 'Pop 100 bubbles', goal: 100, type: 'lifetimePops' },
+  { id: 'pop_10k', name: 'Pop Enthusiast', desc: 'Pop 10,000 bubbles', goal: 10000, type: 'lifetimePops' },
+  { id: 'pop_1m', name: 'Pop Legend', desc: 'Pop 1,000,000 bubbles', goal: 1000000, type: 'lifetimePops' },
+  { id: 'flawless_streak', name: 'Flawless Streak', desc: 'Pop 150 bubbles in a row without a single missed click', goal: 1, type: 'flag' },
+  { id: 'find_dud', name: 'That\'s Not a Pop', desc: 'Find a dud bubble', goal: 1, type: 'flag' },
+  { id: 'collector', name: 'Collector', desc: 'Discover every special bubble type', goal: 1, type: 'flag' },
+];
+
+function defaultCollection() {
+  const c = {};
+  for (const id of Object.keys(SPECIAL_KINDS)) c[id] = { count: 0, discovered: false };
+  return c;
+}
 
 function defaultState() {
   return {
@@ -55,19 +61,14 @@ function defaultState() {
     rowTierIndex: 0,
     scrollX: 0, // world-space scroll position on the infinite sheet
     scrollY: 0,
+    poppedCells: {}, // "row,col" -> variant index (0-29) - popped bubbles never come back
+    collection: defaultCollection(),
     upgrades: {
-      fingerStrength: 0, // 0-3, adds splash radius
-      regenSpeed: 0, // 0-3
       autoPopper: 0, // 0-3
-      multiPop: false,
     },
     prestige: {
       shards: 0,
       recycles: 0,
-    },
-    cosmetics: {
-      unlocked: ['clear'],
-      active: 'clear',
     },
     achievements: {}, // id -> true
     streak: {

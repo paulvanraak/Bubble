@@ -12,6 +12,8 @@ export const ICONS = {
   close: svg('<path d="M6 6l12 12M18 6L6 18"/>'),
   bubble: svg('<circle cx="12" cy="12" r="8"/><path d="M9 8.5c-1.3 1-2 2.2-2 3.8" stroke-width="1.4" opacity="0.6"/>'),
   lock: svg('<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>'),
+  collection: svg('<rect x="3.5" y="3.5" width="7" height="7" rx="1.6"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.6"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.6"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.6"/>'),
+  star: svg('<path d="M12 3.5l2.4 5.3 5.7.6-4.3 3.9 1.2 5.7L12 16.2l-5 2.8 1.2-5.7-4.3-3.9 5.7-.6L12 3.5z"/>'),
 };
 
 export function icon(name, cls = 'icon') {

@@ -1,7 +1,7 @@
-import { ACHIEVEMENTS } from './state.js';
+import { ACHIEVEMENTS, SPECIAL_KINDS } from './state.js';
 
 // Checks lifetime-counter achievements against current state; flag-type achievements
-// (perfect_sheet, find_dud, melody) are unlocked directly via unlockFlag().
+// (flawless_streak, find_dud, collector) are unlocked directly via unlockFlag().
 export function checkCounterAchievements(state) {
   const unlocked = [];
   for (const def of ACHIEVEMENTS) {
@@ -15,17 +15,16 @@ export function checkCounterAchievements(state) {
   return unlocked;
 }
 
+export function checkCollectorAchievement(state) {
+  if (state.achievements.collector) return null;
+  const allFound = Object.keys(SPECIAL_KINDS).every((id) => state.collection[id] && state.collection[id].discovered);
+  if (!allFound) return null;
+  return unlockFlag(state, 'collector');
+}
+
 export function unlockFlag(state, id) {
   const def = ACHIEVEMENTS.find((a) => a.id === id);
   if (!def || state.achievements[id]) return null;
   state.achievements[id] = true;
   return def;
-}
-
-export function applyPaletteUnlock(state, def) {
-  if (def && def.unlocksPalette && !state.cosmetics.unlocked.includes(def.unlocksPalette)) {
-    state.cosmetics.unlocked.push(def.unlocksPalette);
-    return def.unlocksPalette;
-  }
-  return null;
 }

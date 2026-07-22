@@ -218,32 +218,39 @@ html, body {
   left: 0;
   right: 0;
   display: flex;
-  justify-content: center;
-  gap: 10px;
-  padding: 0 16px max(14px, env(safe-area-inset-bottom)) 16px;
+  gap: 6px;
+  background: rgba(6, 13, 18, 0.92);
+  backdrop-filter: blur(14px);
+  border-top: 1px solid rgba(180, 226, 240, 0.1);
+  padding: 8px 8px max(8px, env(safe-area-inset-bottom)) 8px;
   z-index: 10;
 }
 #bottom-nav button {
   pointer-events: auto;
-  border: 1px solid rgba(180, 226, 240, 0.14);
-  background: rgba(15, 28, 36, 0.65);
-  backdrop-filter: blur(14px);
-  border-radius: 16px;
-  padding: 10px 16px;
+  flex: 1;
+  border: none;
+  background: transparent;
+  border-radius: 13px;
+  padding: 8px 4px;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 4px;
   cursor: pointer;
-  transition: transform 0.12s;
-  color: #cfeef6;
+  transition: transform 0.12s, background 0.15s, color 0.15s;
+  color: #7fa3af;
 }
-#bottom-nav button .nav-icon { width: 20px; height: 20px; color: #6fd3e8; }
+#bottom-nav button .nav-icon { width: 20px; height: 20px; color: #6fd3e8; transition: color 0.15s; }
 #bottom-nav button span:last-child {
   font-size: 10.5px;
   font-weight: 700;
   letter-spacing: 0.02em;
 }
+#bottom-nav button.active {
+  background: linear-gradient(135deg, #3fb6d9, #2d8fc9);
+  color: #04141a;
+}
+#bottom-nav button.active .nav-icon { color: #04141a; }
 #bottom-nav button:active { transform: scale(0.94); }
 #bottom-nav button.hidden { display: none; }
 
@@ -368,38 +375,70 @@ html, body {
 .ach-desc { font-size: 12px; color: #83aab6; }
 .ach-progress { font-size: 11px; color: #6fd3e8; margin-top: 2px; font-weight: 700; }
 
-.cosmetic-card {
-  display: inline-flex;
-  flex-direction: column;
+.panel-note {
+  font-size: 12px;
+  color: #7fa3af;
+  font-style: italic;
+  line-height: 1.5;
+  margin-top: 4px;
+}
+
+.pop-score {
+  display: flex;
   align-items: center;
   gap: 8px;
-  background: rgba(255,255,255,0.03);
-  border-radius: 16px;
-  padding: 14px;
-  margin: 0 10px 10px 0;
-  width: calc(50% - 10px);
-  box-sizing: border-box;
-  cursor: pointer;
-  border: 2px solid transparent;
+  background: linear-gradient(135deg, rgba(255, 209, 92, 0.16), rgba(63, 182, 217, 0.1));
+  border: 1px solid rgba(255, 209, 92, 0.3);
+  border-radius: 14px;
+  padding: 10px 14px;
+  margin-bottom: 14px;
+  font-size: 14px;
+  font-weight: 700;
+  color: #ffe1a8;
 }
-.cosmetic-card.locked { opacity: 0.4; cursor: default; }
-.cosmetic-card.active { border-color: #6fd3e8; }
-.swatch-preview {
-  width: 100%;
-  height: 44px;
-  border-radius: 10px;
+.pop-score .inline-icon { color: #ffd15c; width: 1.1em; height: 1.1em; }
+.pop-score strong { color: #fff2d1; }
+
+.collection-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+}
+.collection-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  background: radial-gradient(circle at 50% 0%, rgba(111, 211, 232, 0.08), rgba(255,255,255,0.02));
+  border: 1px solid rgba(180, 226, 240, 0.1);
+  border-radius: 16px;
+  padding: 14px 10px;
+  text-align: center;
+  opacity: 0.55;
+}
+.collection-card.discovered { opacity: 1; }
+.collection-glow {
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
+  background: rgba(255,255,255,0.04);
+  box-shadow: 0 0 0 1px rgba(180, 226, 240, 0.12) inset;
 }
-.swatch-bubble {
-  width: 22px;
-  height: 22px;
+.collection-card.discovered .collection-glow {
+  box-shadow: 0 0 18px 3px color-mix(in srgb, var(--glow) 55%, transparent), 0 0 0 2px var(--glow) inset;
+}
+.collection-swatch {
+  width: 30px;
+  height: 30px;
   border-radius: 50%;
-  box-shadow: 0 0 10px 2px rgba(255,255,255,0.35), inset -2px -2px 4px rgba(0,0,0,0.2), inset 2px 2px 3px rgba(255,255,255,0.6);
+  box-shadow: inset -3px -3px 5px rgba(0,0,0,0.25), inset 2px 2px 4px rgba(255,255,255,0.5);
 }
-.cosmetic-name { font-weight: 700; color: #eaf7fb; font-size: 13px; }
-.cosmetic-state { font-size: 10.5px; color: #7fa3af; font-weight: 700; }
+.collection-name { font-weight: 700; color: #eaf7fb; font-size: 13px; }
+.collection-desc { font-size: 11px; color: #83aab6; line-height: 1.4; }
+.collection-count { font-size: 10.5px; color: #ffd15c; font-weight: 700; }
 
 .prestige-info p { color: #a9cdd7; font-size: 13.5px; line-height: 1.5; }
 .prestige-info button {

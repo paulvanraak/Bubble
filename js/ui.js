@@ -1,5 +1,5 @@
-import { ACHIEVEMENTS, PALETTES, ROW_TIERS } from './state.js';
-import { UPGRADE_DEFS, costFor, canAfford, canPrestige, shardsFromRecycle, prestigeMultiplierFor, splashRadiusFor, autoPopperRateFor, regenSecondsFor } from './upgrades.js';
+import { ACHIEVEMENTS, ROW_TIERS, SPECIAL_KINDS, computePopScore } from './state.js';
+import { UPGRADE_DEFS, costFor, canAfford, canPrestige, shardsFromRecycle, prestigeMultiplierFor, autoPopperRateFor } from './upgrades.js';
 import { ICONS, icon } from './icons.js';
 
 function formatNumber(n) {
@@ -35,6 +35,7 @@ export class UI {
     this.modalOverlay = document.getElementById('modal-overlay');
     this.modal = document.getElementById('modal');
     this.prestigeBtn = document.getElementById('prestige-btn');
+    this.navButtons = document.querySelectorAll('#bottom-nav button[data-panel]');
 
     this._wireStatic();
     this._wireGameEvents();
@@ -54,8 +55,11 @@ export class UI {
   }
 
   _wireStatic() {
-    document.querySelectorAll('#bottom-nav button[data-panel]').forEach((btn) => {
-      btn.addEventListener('click', () => this.openPanel(btn.dataset.panel));
+    this.navButtons.forEach((btn) => {
+      btn.addEventListener('click', () => {
+        if (this._openPanelId === btn.dataset.panel) this.closePanel();
+        else this.openPanel(btn.dataset.panel);
+      });
     });
     document.getElementById('panel-close').addEventListener('click', () => this.closePanel());
     this.panelOverlay.addEventListener('click', (e) => {
@@ -71,13 +75,13 @@ export class UI {
     this.game.on('points', (p) => this._renderPoints(p));
     this.game.on('gain', (amount) => this._popGainLabel(amount));
     this.game.on('combo', ({ combo, multiplier }) => this._renderCombo(combo, multiplier));
-    this.game.on('achievement', ({ def, palette }) => this._toastAchievement(def, palette));
+    this.game.on('achievement', ({ def }) => this._toastAchievement(def));
     this.game.on('toast', ({ text }) => this._toast(text));
     this.game.on('offlineEarnings', (data) => this._showOfflineModal(data));
     this.game.on('streak', ({ count }) => this._showStreakModal(count));
     this.game.on('upgradesChanged', () => { if (this._openPanelId === 'shop') this._renderShop(); });
     this.game.on('rowsChanged', () => { if (this._openPanelId === 'shop') this._renderShop(); });
-    this.game.on('paletteChanged', () => { if (this._openPanelId === 'cosmetics') this._renderCosmetics(); });
+    this.game.on('collectionChanged', () => { if (this._openPanelId === 'collection') this._renderCollection(); });
     this.game.on('prestiged', (gained) => this._toast(`Recycled - +${gained} Plastic Shards`));
     this.game.on('prestigeAvailable', () => this.prestigeBtn.classList.remove('hidden'));
     if (canPrestige(this.state)) this.prestigeBtn.classList.remove('hidden');
@@ -116,22 +120,24 @@ export class UI {
     }, 3200);
   }
 
-  _toastAchievement(def, palette) {
-    this._toast(`Achievement unlocked: ${def.name}${palette ? ` - new skin: ${PALETTES[palette].name}` : ''}`);
+  _toastAchievement(def) {
+    this._toast(`Achievement unlocked: ${def.name}`);
   }
 
   openPanel(id) {
     this._openPanelId = id;
     this.panelOverlay.classList.remove('hidden');
+    this.navButtons.forEach((btn) => btn.classList.toggle('active', btn.dataset.panel === id));
     if (id === 'shop') this._renderShop();
     if (id === 'achievements') this._renderAchievements();
-    if (id === 'cosmetics') this._renderCosmetics();
+    if (id === 'collection') this._renderCollection();
     if (id === 'prestige') this._renderPrestige();
   }
 
   closePanel() {
     this.panelOverlay.classList.add('hidden');
     this._openPanelId = null;
+    this.navButtons.forEach((btn) => btn.classList.remove('active'));
   }
 
   _renderShop() {
@@ -142,8 +148,6 @@ export class UI {
     const stats = document.createElement('div');
     stats.className = 'stat-row';
     stats.innerHTML = `
-      <span>Splash radius: ${splashRadiusFor(s)}</span>
-      <span>Regen: ${regenSecondsFor(s).toFixed(1)}s</span>
       <span>Auto-pop: ${autoPopperRateFor(s).toFixed(2)}/s</span>
       <span>View size: ${ROW_TIERS[s.rowTierIndex]}</span>
     `;
@@ -172,6 +176,11 @@ export class UI {
       }
       this.panelContent.appendChild(card);
     }
+
+    const note = document.createElement('p');
+    note.className = 'panel-note';
+    note.textContent = 'Special bubble abilities aren\'t bought here - find them out on the sheet and grow your Collection.';
+    this.panelContent.appendChild(note);
   }
 
   _renderAchievements() {
@@ -197,26 +206,33 @@ export class UI {
     }
   }
 
-  _renderCosmetics() {
-    this.panelTitle.textContent = 'Sheet Skins';
+  _renderCollection() {
+    this.panelTitle.textContent = 'Collection';
     this.panelContent.innerHTML = '';
-    for (const [id, pal] of Object.entries(PALETTES)) {
-      const unlocked = this.state.cosmetics.unlocked.includes(id);
-      const active = this.state.cosmetics.active === id;
+    const s = this.state;
+
+    const score = document.createElement('div');
+    score.className = 'pop-score';
+    score.innerHTML = `${icon('star', 'inline-icon')}<span>Pop-Score: <strong>${formatNumber(computePopScore(s))}</strong></span>`;
+    this.panelContent.appendChild(score);
+
+    const grid = document.createElement('div');
+    grid.className = 'collection-grid';
+    for (const [id, def] of Object.entries(SPECIAL_KINDS)) {
+      const c = s.collection[id] || { count: 0, discovered: false };
       const card = document.createElement('div');
-      card.className = `cosmetic-card ${unlocked ? '' : 'locked'} ${active ? 'active' : ''}`;
+      card.className = `collection-card ${c.discovered ? 'discovered' : ''}`;
       card.innerHTML = `
-        <div class="swatch-preview" style="background:linear-gradient(135deg, ${pal.bg[0]}, ${pal.bg[1]})">
-          <span class="swatch-bubble" style="background:${pal.tint}"></span>
+        <div class="collection-glow" style="--glow:${def.tint}">
+          <span class="collection-swatch" style="background:${c.discovered ? def.tint : '#3a4b55'}"></span>
         </div>
-        <div class="cosmetic-name">${pal.name}</div>
-        <div class="cosmetic-state">${active ? 'Active' : unlocked ? 'Unlocked' : 'Locked'}</div>
+        <div class="collection-name">${c.discovered ? def.name : '???'}</div>
+        <div class="collection-desc">${c.discovered ? def.desc : 'Not yet discovered'}</div>
+        <div class="collection-count">${c.discovered ? `Found &times;${c.count} &middot; +${def.rarityScore} score` : ''}</div>
       `;
-      if (unlocked && !active) {
-        card.addEventListener('click', () => { this.game.setPalette(id); this._renderCosmetics(); });
-      }
-      this.panelContent.appendChild(card);
+      grid.appendChild(card);
     }
+    this.panelContent.appendChild(grid);
   }
 
   _renderPrestige() {
@@ -228,7 +244,7 @@ export class UI {
     const info = document.createElement('div');
     info.className = 'prestige-info';
     info.innerHTML = `
-      <p>Recycle your sheet for a permanent point multiplier. You'll keep all achievements and cosmetics, but your points and upgrades reset.</p>
+      <p>Recycle your sheet for a permanent point multiplier and a fresh, unpopped sheet. You'll keep all achievements and your Collection, but your points and upgrades reset.</p>
       <p>Plastic Shards: <strong>${s.prestige.shards}</strong> (current multiplier &times;${prestigeMultiplierFor(s).toFixed(2)})</p>
       <p>${eligible ? `Recycling now grants <strong>+${gain} Shards</strong>.` : 'Max out Wide View and earn 50,000 lifetime points to unlock recycling.'}</p>
       <button id="do-recycle" ${eligible ? '' : 'disabled'}>Recycle Now</button>
